@@ -1,6 +1,8 @@
 # Architecture — 1PDF
 
-Полностью переписано 2026-09-08 (`TASK-0002`, независимый аудит по коду).
+Полностью переписано 2026-09-08 (`TASK-0002`, независимый аудит по коду),
+дополнено 2026-09-08 (`TASK-0003` — SEO landing pages, раздел «Поток
+запроса» и структура каталогов ниже).
 
 ## Топология контейнеров (`docker-compose.yml`, полностью прочитан)
 
@@ -62,6 +64,24 @@ GET /admin → admin:8031/admin.html
   → fetch('/api/users', '/api/payments', '/api/vouchers', '/api/admin/payment-settings', ...)
 ```
 
+### SEO landing pages (`TASK-0003`, публичный, без PRO-гейта)
+```
+GET /ru/<slug>/ или /uz/<slug>/
+  → nginx: location ~ ^/(ru|uz)/([a-z0-9-]+)/?$   (БЕЗ auth_request — принципиально
+        │   отличается от /editor/*, чтобы Google/новый пользователь видели страницу
+        │   без входа в приватное приложение, см. GAPS.md/OVERVIEW.md TASK-0003)
+        ▼
+  proxy_pass admin:8031/seo/$1-$2.html  →  express.static(admin/public) отдаёт
+        статический prerendered файл (сгенерирован scripts/generate-seo-pages.mjs)
+        │
+        └─ CTA-кнопка "Открыть в редакторе" → /editor/  (дальше — обычный PRO-гейт выше)
+```
+Несуществующий `<slug>` тоже проходит regex (`[a-z0-9-]+` совпадает с чем
+угодно), но файла на диске нет → `express.static` пропускает запрос дальше
+→ `authMiddleware` (нет в `publicPaths`) → **401**, а не 404 — тот же
+паттерн, что и для любого другого отсутствующего статического файла на
+сайте (см. [GAPS.md](GAPS.md)).
+
 ## Структура каталогов и назначение
 
 ```
@@ -75,6 +95,9 @@ GET /admin → admin:8031/admin.html
 │   ├── utils/paymeErrors.ts    # коды ошибок Payme JSON-RPC
 │   ├── seed.ts                 # сидинг SUPERADMIN + лендинг CMS (RU/UZ)
 │   └── public/                 # index.html (лендинг), portal.html (кабинет), admin.html (админка) — vanilla JS, без сборки
+│       ├── robots.txt          # TASK-0003: исключает /portal /admin /editor/ /api/ /uploads/
+│       ├── sitemap.xml         # TASK-0003: сгенерирован, 23 URL (сгенерирован generate-sitemap.mjs)
+│       └── seo/                # TASK-0003: 22 статических RU/UZ SEO landing pages (см. VIEWS.md)
 ├── editor/                     # независимый Vite/React проект
 │   ├── src/app/                # App.tsx (простой стейт-свитч Home/Editor, без роутера), routes/
 │   ├── src/components/editor/  # Toolbar, PdfViewer, PropertiesPanel, SaveButton, ExportButton, ...
@@ -87,8 +110,13 @@ GET /admin → admin:8031/admin.html
 │   ├── schema.prisma           # 15 моделей, 4 enum'а
 │   └── migrations/             # РЕАЛЬНЫЙ формат Prisma (migration_lock.toml + 5 папок) —
 │                                #   в отличие от других проектов my_office (contador — сырой SQL)
-├── scripts/assert-migrations-additive.sh   # проверяет ОДНУ конкретную (захардкоженную) миграцию на деструктивность
-├── nginx.freepdf.conf           # конфиг контейнера 1pdf-nginx
+├── scripts/
+│   ├── assert-migrations-additive.sh   # проверяет ОДНУ конкретную (захардкоженную) миграцию на деструктивность
+│   ├── generate-seo-pages.mjs   # TASK-0003: source of truth для контента 22 SEO-страниц → admin/public/seo/
+│   └── generate-sitemap.mjs     # TASK-0003: собирает admin/public/sitemap.xml из admin/public/seo/*.html
+├── nginx.freepdf.conf           # конфиг контейнера 1pdf-nginx; bind-mount ОДНОГО файла (:ro) —
+│                                #   правка на хосте требует docker restart 1pdf-nginx, reload недостаточен
+│                                #   при замене inode редактором (см. GAPS.md, TASK-0003)
 ├── docker-compose.yml           # 3 сервиса: nginx-proxy, postgres, admin
 ├── Dockerfile.admin.v2          # 2-стадийная сборка: editor (Vite build) → admin (tsx runtime)
 ├── data_oo/, db_oo/, lib_oo/, logs_oo/   # остатки самостоятельного ONLYOFFICE Document Server —

@@ -1,17 +1,62 @@
 # Views — 1PDF
 
-Новый файл, создан 2026-09-08 (`TASK-0002`). Проект не использует EJS —
-два разных механизма представления: 3 vanilla HTML/JS-файла без сборки
-(`admin/public/`) и React SPA (`editor/`, Vite). Карта API-вызовов
-построена через `grep -oE "['\"\`]/api/[a-zA-Z0-9/_:-]*"` по HTML-файлам и
+Создан 2026-09-08 (`TASK-0002`), дополнен 2026-09-08 (`TASK-0003` — раздел
+«SEO landing pages» ниже). Проект не использует EJS — три механизма
+представления: 3 vanilla HTML/JS-файла без сборки (`admin/public/`),
+22 статических prerendered SEO-страницы без фреймворка (`admin/public/seo/`)
+и React SPA (`editor/`, Vite). Карта API-вызовов построена через
+`grep -oE "['\"\`]/api/[a-zA-Z0-9/_:-]*"` по HTML-файлам и
 `grep -rn "fetch("` по `editor/src` — не построчным чтением каждого файла
 (методологическая оговорка, см. GAPS.md).
 
-## `admin/public/index.html` (340 строк) — лендинг
+## `admin/public/seo/*.html` (22 файла) — публичные SEO landing pages (TASK-0003)
+
+Статические HTML-файлы, сгенерированные `scripts/generate-seo-pages.mjs`
+(source of truth для контента — редактировать через генератор, не файлы
+напрямую) и `scripts/generate-sitemap.mjs`. Не за `authMiddleware` в
+обычном смысле — доступны напрямую по URL `/ru/<slug>/` и `/uz/<slug>/`
+через отдельный `location` в `nginx.freepdf.conf` (без `auth_request`, в
+отличие от `/editor/*`); файлы физически лежат под `express.static(admin/public)`
+и были бы доступны и по прямому пути `/seo/<lang>-<slug>.html`.
+
+10 пар (RU/UZ) + хаб `pdf-tools`/`pdf-vositalari`:
+
+| Ключ | RU URL | UZ URL |
+|---|---|---|
+| pdf-editor | `/ru/pdf-editor/` | `/uz/pdf-muharriri/` |
+| edit-pdf | `/ru/edit-pdf/` | `/uz/pdf-tahrirlash/` |
+| add-text | `/ru/add-text-to-pdf/` | `/uz/pdfga-matn-qoshish/` |
+| add-image | `/ru/add-image-to-pdf/` | `/uz/pdfga-rasm-qoshish/` |
+| draw | `/ru/draw-on-pdf/` | `/uz/pdfga-chizish/` |
+| highlight | `/ru/highlight-pdf/` | `/uz/pdf-matnini-belgilash/` |
+| annotate | `/ru/annotate-pdf/` | `/uz/pdfga-izoh-qoshish/` |
+| sign | `/ru/sign-pdf/` | `/uz/pdfga-imzo-qoyish/` |
+| fill | `/ru/fill-pdf/` | `/uz/pdf-toldirish/` |
+| russian/localization | `/ru/pdf-editor-russian/` | `/uz/pdf-muharriri-ozbek-tilida/` |
+| hub | `/ru/pdf-tools/` | `/uz/pdf-vositalari/` |
+
+Каждая страница (кроме хаба): canonical (self), взаимный `hreflang`
+ru/uz/x-default, Open Graph + Twitter meta, JSON-LD `BreadcrumbList` +
+`FAQPage` (пары `pdf-editor`/`edit-pdf` дополнительно несут
+`WebApplication`); единственный CTA — `<a href="/editor/">`, полагается на
+существующий gate `auth_request`/`/api/auth/verify` для редиректа на
+`/portal` (не авторизован) или `/portal?msg=pro_required` (нет PRO) —
+логика авторизации не дублируется на самих SEO-страницах. Контент не
+использует слово «бесплатно»/«free» — весь `/editor/*` требует PRO (см.
+[GAPS.md](GAPS.md), пункт про `Home.tsx`).
+
+`admin/public/robots.txt` (новый) и `admin/public/sitemap.xml`
+(сгенерирован, 23 URL) исключают `/portal`, `/admin`, `/editor/`, `/api/`,
+`/uploads/`.
+
+## `admin/public/index.html` (лендинг)
 
 Публичная страница, обслуживается по `GET /`. Загружает контент через
 `GET /api/landing/content?lang=` (единственный обнаруженный вызов API —
 остальное статичный HTML/CSS). Ссылки на `/portal`, `/admin`, `/editor`.
+С `TASK-0003` (2026-09-08) навигация и футер дополнены ссылками на
+PDF tools hub и 5 SEO tool pages (см. раздел ниже), переключаемыми по
+языку (`#nav-tools`, `#footer-tools`, объект `TOOL_LINKS` в инлайн-скрипте).
 
 ## `admin/public/portal.html` (1148 строк) — личный кабинет пользователя
 

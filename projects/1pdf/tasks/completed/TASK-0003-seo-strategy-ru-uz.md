@@ -1,7 +1,8 @@
 # TASK-0003 — SEO-стратегия 1PDF для RU/UZ
 
-Статус: ACTIVE
+Статус: COMPLETED (Phase 0-2 реализованы и опубликованы в продакшн 2026-09-08; Phase 3-6 — будущая работа, см. «Реализация» в конце файла)
 Создано: 2026-09-08
+Завершено: 2026-09-08
 Проект: 1PDF
 Область: SEO / product growth / landing architecture
 
@@ -537,3 +538,46 @@ feature | supported | route/component | free/pro | SEO page
 ## Следующее действие агента
 
 Следующая техническая задача должна начаться с read-only capability audit `/home/admin1/1pdf/editor/src` и построения точной матрицы функций. После этого обновить этот TASK конкретными `SUPPORTED/PARTIAL/NOT_IMPLEMENTED`, скорректировать P0 и только затем создавать production landing pages.
+
+## Capability audit (выполнен 2026-09-08, read-only чтение `/home/admin1/1pdf/editor/src`)
+
+| Feature | Статус | Файл:строка | Free/PRO | SEO page |
+|---|---|---|---|---|
+| Добавить текст | SUPPORTED | `types/edits.ts` (`TextEdit`), размещение — компоненты `editor/` | PRO (весь `/editor/*` за paywall) | `/ru/add-text-to-pdf/` |
+| Изменить/заменить существующий текст | SUPPORTED — «cover-and-replace»: существующий текст находится через `lib/pdf/textRuns.ts:38-90` (`extractTextRuns`/`findRunAt`, PDF.js), визуально перекрывается `CoverEdit` и поверх кладётся новый `TextEdit`; подтверждено и локализацией `editor.replaceHint` в `i18n/locales/uz.json` | PRO | `/ru/edit-pdf/` |
+| Добавить изображение | SUPPORTED | `types/edits.ts` (`ImageEdit`) | PRO | `/ru/add-image-to-pdf/` |
+| Подпись (нарисовать или загрузить) | SUPPORTED | `components/tools/SignatureTool.tsx` (canvas-подпись + upload PNG, `place()` создаёт `ImageEdit`) | PRO | `/ru/sign-pdf/` |
+| Выделение текста | SUPPORTED | `types/edits.ts` (`HighlightEdit`) | PRO | `/ru/highlight-pdf/` |
+| Рисование (линия/от руки) | SUPPORTED | `types/edits.ts` (`PolylineEdit`, `type: 'line' \| 'freehand'`) | PRO | `/ru/draw-on-pdf/` |
+| Фигуры (прямоугольник) и штампы (галочка/крестик) | SUPPORTED | `types/edits.ts` (`RectEdit`, `StampEdit`) | PRO | входит в `/ru/annotate-pdf/` |
+| Комментарии в духе «sticky note» (отдельная от разметки сущность) | **NOT_IMPLEMENTED** — в `EditObject` нет типа `comment`/заметки, есть только визуальная разметка (highlight/rect/polyline/stamp) | — | — | `/ru/annotate-pdf/` переформулирован как «разметка и пометки» (highlight+фигуры+рисование+штампы), а не «комментарии» в духе Adobe/Word |
+| Заполнение форм (автоопределение AcroForm-полей) | **NOT_IMPLEMENTED** — нет `getForm()`/`AcroForm`/`PDFTextField` нигде в `editor/src` | — | — | `/ru/fill-pdf/` переформулирован честно: «впишите текст в любое место документа вручную», не «умное распознавание полей» |
+| Повернуть страницу | SUPPORTED | `lib/pdf/pageOperations.ts:65-78` (`rotatePage`), UI — `components/editor/ThumbnailStrip.tsx:115` | PRO | не в P0 этой волны, см. рекомендацию ниже |
+| Переставить/удалить страницы | SUPPORTED | `pageOperations.ts:19-46` (`movePage`/`deletePages`), UI — `ThumbnailStrip.tsx:127,139,151` | PRO | не в P0 |
+| Объединить PDF (добавить страницы из другого файла в открытый документ) | SUPPORTED — не отдельный «merge-only» флоу, а функция внутри редактора: `pageOperations.ts:81-90` (`mergePdfs`), UI — `ThumbnailStrip.tsx:192-199` (`onMergeFiles`) | PRO | не в P0, честная формулировка: «добавить страницы из другого PDF» |
+| Разделить/извлечь страницы (выбрать → скачать отдельным файлом) | SUPPORTED | `pageOperations.ts:93-99` (`splitPages`), UI — `ThumbnailStrip.tsx:202-209` (`onSplitDownload`) | PRO | не в P0 |
+| Отмена операций со страницами (undo) | SUPPORTED | `ThumbnailStrip.tsx` (`undoPageOp`, `pageOpHistory`) | PRO | упоминается как деталь UX, не отдельная страница |
+| Пользовательские шрифты | SUPPORTED | `types/edits.ts` (`FontId` допускает `custom-<uuid>`), `store/fontStore.ts` | PRO | упоминается как деталь на `/ru/add-text-to-pdf/` |
+| Экспорт без водяного знака, обработка в браузере (файл не уходит на сервер до нажатия «Сохранить») | SUPPORTED | `lib/pdf/exportPdf.ts`, `components/editor/ExportButton.tsx` | — | упоминается как «почему 1PDF» на всех страницах |
+| Конвертация (Word/Excel/PPT/JPG/PNG ↔ PDF), OCR, сжатие, водяной знак (добавление), пароль/шифрование | **NOT_IMPLEMENTED** — ни одного совпадения по `watermark`(добавление)/`compress`/`encrypt`/`setPassword` как реальной функции нигде в `editor/src` (только в маркетинговом тексте «no watermark» про экспорт без чужого водяного знака) | — | — | Cluster D остаётся P2/P3 — публикуется только вместе с реальной реализацией |
+
+⚠️ **Обнаружено серьёзное противоречие в продуктовом тексте, не создано этой задачей**: `editor/src/app/routes/Home.tsx:14,20,75,89` (домашний экран самого редактора, унаследован от open-source freePDF) утверждает *«No upload. No paywall. No watermark»* и «every edit and export is free... no signup» — это прямо противоречит реальному развёртыванию, где весь `/editor/*` закрыт PRO-подпиской на уровне nginx `auth_request` (см. `TASK-0002`, `docs/ARCHITECTURE.md`). Эта задача **не изменяет** `Home.tsx` (вне области «SEO landing pages»), но использует только подтверждённо честные формулировки на новых страницах и фиксирует находку здесь и в `docs/GAPS.md` my_office.
+
+### Скорректированный P0 (после аудита)
+
+Исходные 10 пар из таблицы выше подтверждены как совместимые с реальным функционалом (с переформулировкой пп. 7 и 9, отмеченной в таблице аудита). Реализованы в этой задаче.
+
+**Рекомендация для следующей волны (не реализовано в этой задаче, требует отдельного решения о приоритете)**: добавить `/ru/rotate-pdf/`, `/ru/merge-pdf/`, `/ru/split-pdf/`, `/ru/reorder-pdf-pages/`, `/ru/delete-pdf-pages/` (+ UZ-пары) — все пять подтверждены как **SUPPORTED** этим аудитом, в отличие от предположения черновика задачи (Cluster C/D), где они числились как «публиковать только по подтверждённому функционалу» без proведённой проверки. Формулировки должны честно описывать UX «внутри редактора одного документа», а не отдельный upload-only merge/split инструмент.
+
+## Реализация (2026-09-08)
+
+- Foundation (Phase 1) и первая волна P0 (Phase 2, 10 RU/UZ пар + PDF tools hub) реализованы и опубликованы в продакшн `1pdf.uz` в этой же задаче. Код закоммичен и запушен в `1pdf_v1@main` (коммит `654c09c`).
+- Генератор `scripts/generate-seo-pages.mjs` (source of truth для контента и capability-ограничений) + `scripts/generate-sitemap.mjs` — статические prerendered HTML-страницы в `admin/public/seo/`, без фреймворка, в стиле существующих `admin/public/*.html`.
+- `nginx.freepdf.conf` — новый `location ~ ^/(ru|uz)/([a-z0-9-]+)/?$`, публичный, без `auth_request` (в отличие от `/editor/*`), проксирует на соответствующий статический файл.
+- `admin/public/robots.txt` (новый) + `admin/public/sitemap.xml` (23 URL, сгенерирован) — `/portal`, `/admin`, `/editor/`, `/api/`, `/uploads/` исключены.
+- `admin/public/index.html` — добавлена ссылка «Инструменты»/«Vositalar» в навигацию и блок из 5 ссылок на инструменты + хаб в футере, с переключением по языку (RU/UZ) через существующий JS-механизм страницы.
+- **Опубликованные URL** (все проверены `curl` через продовый `1pdf-nginx`, код ответа 200): `/ru/pdf-editor/`, `/ru/edit-pdf/`, `/ru/add-text-to-pdf/`, `/ru/add-image-to-pdf/`, `/ru/draw-on-pdf/`, `/ru/highlight-pdf/`, `/ru/annotate-pdf/`, `/ru/sign-pdf/`, `/ru/fill-pdf/`, `/ru/pdf-editor-russian/`, `/ru/pdf-tools/` и их UZ-пары (`/uz/pdf-muharriri/`, `/uz/pdf-tahrirlash/`, `/uz/pdfga-matn-qoshish/`, `/uz/pdfga-rasm-qoshish/`, `/uz/pdfga-chizish/`, `/uz/pdf-matnini-belgilash/`, `/uz/pdfga-izoh-qoshish/`, `/uz/pdfga-imzo-qoyish/`, `/uz/pdf-toldirish/`, `/uz/pdf-muharriri-ozbek-tilida/`, `/uz/pdf-vositalari/`) — итого 22 страницы.
+- Каждая страница: уникальные `<title>`/description/H1, canonical (self), взаимный `hreflang` (ru/uz/x-default), Open Graph + Twitter meta, `BreadcrumbList` + `FAQPage` JSON-LD (все 48 JSON-LD блоков синтаксически провалидированы), хаб-страницы дополнительно несут `CollectionPage`; `pdf-editor`/`edit-pdf` — `WebApplication`.
+- **Обнаружена и исправлена операционная проблема при деплое**: `nginx.freepdf.conf` смонтирован в `docker-compose.yml` как bind-mount ОДНОГО файла (`:ro`); правка файла на хосте инструментом создала новый inode, и контейнер `1pdf-nginx` продолжал обслуживать старую (несуществующую) версию конфига до `docker restart 1pdf-nginx` (не rebuild). После рестарта md5 хоста и контейнера совпали, `nginx -t` прошёл, все новые маршруты вернули 200. Это известный нюанс bind-mount'ов одиночных файлов в Docker, стоит иметь в виду при будущих правках `nginx.freepdf.conf`/`docker-compose.yml` этого проекта.
+- Google Search Console / Yandex.Webmaster: файлы/разметка на стороне сайта, необходимые для верификации (мета-теги/файлы подтверждения), не добавлялись — для этого нужны токены верификации из соответствующих аккаунтов владельца продукта, которых нет у агента. Требуется отдельное действие владельца (см. `docs/OPEN_QUESTIONS.md`).
+- Не реализовано в этой задаче (осознанно, вне P0): Phase 3 (20-30 доп. страниц под остальные device/use-case intent), Phase 4 (utilities — merge/split/rotate/reorder/delete как отдельные landing, хотя функционал подтверждён SUPPORTED, см. таблицу выше), Phase 5 (guides), Phase 6 (оптимизация по данным Search Console — недоступно без верификации).
