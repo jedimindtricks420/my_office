@@ -1,167 +1,242 @@
 # Database — Contador
 
-Снимок на 2026-09-05. Проект использует **две полностью независимые базы данных**
-на одном PostgreSQL 16 инстансе (`postgres:16-alpine`, контейнер `contador-db`) —
-`contador` (legacy v1 + admin) и `contador_v2` (основное приложение v2) — с двумя
-независимыми Prisma-схемами. Модели с одинаковыми именами (`AccountType`,
-`PlanType`, `Voucher`, `Payment`, `Subscription`, `AuditLog`) **не являются общими** —
-это раздельные определения с разными наборами полей/значений.
+Полностью переписано 2026-09-08 (`TASK-0002`). Оба файла схем прочитаны
+целиком построчно: `prisma/schema.prisma` (280 строк) и
+`v2/prisma/schema.prisma` (585 строк).
 
-⚠️ Проект **не использует** `prisma migrate deploy`/стандартную историю миграций
-Prisma — обе директории миграций содержат **сырые `.sql`-файлы**, применяемые вручную
-через `psql`. Скрипт `db:migrate` (`prisma migrate dev`) присутствует в
-`v2/package.json`, но по имеющимся данным не отражает реальный процесс применения
-изменений схемы (нет папок с Prisma-сгенерированной структурой миграций).
+Проект использует **две полностью независимые базы** на одном инстансе
+PostgreSQL 16 — `contador` (legacy v1 + admin) и `contador_v2` (основное
+приложение). Модели с одинаковыми именами (`AccountType`, `PlanType`,
+`Voucher`, `Payment`, `Subscription`, `AuditLog`, `Account`, `Counterparty`)
+**не являются общими** — раздельные определения, разные поля и в ряде случаев
+разные значения enum'ов.
 
 ---
 
-## Схема v2 (`v2/prisma/schema.prisma`, БД `contador_v2`)
+## Схема v2 (`v2/prisma/schema.prisma`, БД `contador_v2`) — 22 модели, 20 enum'ов
 
 `datasource`: `postgresql`, `url = env("DATABASE_URL")`.
-`generator client`: `prisma-client-js`, `output = "../node_modules/.prisma/client"`.
+`generator client`: output `../node_modules/.prisma/client`.
 
-### Модели (20)
+### ER-обзор (основные связи)
 
-- **User** — `id` (uuid), `email` (unique), `passwordHash`, `name?`, `createdAt`,
-  `activeOrgId?`. → `memberships OrgMember[]`, `passwordResetTokens[]`.
-- **Organization** — `id`, `name`, `inn?`, `taxRegime` (enum `TaxRegime`,
-  default `TURNOVER_TAX`), `isVatPayer` (default `false`), `autoAccrueProfitTax`
-  (default `true`), `profitTaxRate` (default `0.15`), `taxBenefit` (enum
-  `TaxBenefitType`, default `NONE`), `itParkResidentSince?`,
-  `itParkCertificateNumber?`, `avgHeadcount` (default `1`),
-  `avgHeadcountDisabled` (default `0`), `createdAt`, `activityDescription?`,
-  `turnoverTaxRate` (default `0.04`), `aiConfidenceThreshold` (default `70`),
-  `maxClarificationQuestions` (default `10`), `settings Json?`,
-  `activityCustom?`, `activityGroup?`, `charterCapitalAmount Decimal(18,2)?`,
-  `charterCapitalDeclaredAt?`, `charterCapitalFundingType?` (enum). Центральная
-  модель tenant-изоляции — почти все прочие модели ссылаются на `orgId`.
-- **OrgMember** — `id`, `role` (enum `OrgRole`, default `OWNER`), `userId`, `orgId`;
-  `@@unique([userId, orgId])`.
-- **BankAccount** — `id`, `orgId`, `name`, `currency` (default `"UZS"`),
+```
+User ──< OrgMember >── Organization ──< BankAccount
+  │                        │  │             │
+  │ PasswordResetToken     │  │             ├─< StagedTransaction >── Period
+  │                        │  │                        │
+  │                        │  ├─< Period ──< Document ──< JournalEntry >── Account (иерархия parentId)
+  │                        │  │      │           │              │
+  │                        │  │      │           ├─< OpenItem ──┴── Counterparty
+  │                        │  │      │           └── DocumentType (postingTemplate JSON)
+  │                        │  │      └─< ClosingJob (state machine мастера закрытия)
+  │                        │  ├─< Rule ── DocumentType
+  │                        │  ├─< TaxCalendarEvent, TaxDeadlineTemplate
+  │                        │  ├─< AuditLog
+  │                        │  ├── Subscription (1:1)
+  │                        │  ├─< Payment, Voucher
+  │                        │  ├─< TaxReportAccountMapping (orgId=null → дефолт для всех)
+  │                        │  └─< OrgCostingMethodHistory
+```
+
+### Модели (алфавитный порядок полей — как в файле)
+
+- **User** (`schema.prisma:11-20`) — `id`, `email` (unique), `passwordHash`,
+  `name?`, `createdAt`, `activeOrgId?` (String, **не foreign key** — просто
+  ссылка на `Organization.id`, не проверяется на уровне схемы). →
+  `memberships OrgMember[]`, `passwordResetTokens[]`.
+- **Organization** (22-74) — центр tenant-изоляции. Ключевые поля:
+  `taxRegime` (enum, default `TURNOVER_TAX`), `isVatPayer` (default `false`),
+  `autoAccrueProfitTax` (default `true`), `profitTaxRate` (Float, default
+  `0.15`), `taxBenefit` (enum, default `NONE`), `itParkResidentSince?`,
+  `itParkCertificateNumber?`, `avgHeadcount`/`avgHeadcountDisabled` (для шапки
+  «Расчёта налога на прибыль»), `turnoverTaxRate` (default `0.04`),
+  `aiConfidenceThreshold` (default `70`), `maxClarificationQuestions`
+  (default `10`), `settings Json?` (используется как свободная карта:
+  `hiddenAccounts[]`, `openItemDeadlines{}` — не отдельные таблицы),
+  `activityGroup/Description/Custom` (категория деятельности, кормит AI-
+  промпт), `charterCapitalAmount Decimal(18,2)?`, `charterCapitalDeclaredAt?`,
+  `charterCapitalFundingType?` (enum). 15 обратных связей (см. ER выше).
+- **OrgMember** (76-85) — `role` (enum `OrgRole`, default `OWNER`), `userId`,
+  `orgId`; `@@unique([userId, orgId])`.
+- **BankAccount** (87-100) — `orgId`, `name`, `currency` (default `"UZS"`),
   `bankName?`, `accountNumber?`, `lastBalance Decimal(20,2)` (default `0`),
-  `lastSyncedAt?`; `@@index([orgId])`.
-- **Period** — `id`, `orgId`, `year Int`, `month Int`, `mode` (enum `PeriodMode`,
-  default `ACTIVE`), `status` (enum `PeriodStatus`, default `OPEN`), `lockDate?`,
-  `closingData Json?`; `@@unique([orgId, year, month])`.
-- **StagedTransaction** — `id`, `orgId`, `bankAccountId`, `periodId`,
-  `date`, `amount Decimal(20,2)`, `direction` (enum `TransactionDirection`),
-  `description`, `counterpartyHint?`, `counterpartyInn?`, `hash` (дедупликация
-  импорта), `status` (enum `StagedTransactionStatus`, default `IMPORTED`),
-  `aiSuggestion Json?`, `documentId?`, `importBatchId?`, `createdAt`;
-  `@@unique([orgId, hash])`.
-- **Rule** — `id`, `orgId`, `matchType` (enum `RuleMatchType`), `matchValue`,
-  `categoryId` (→ `DocumentType`), `direction?`, `createdFrom` (enum
-  `RuleSource`, default `USER_ANSWER`), `order` (default `0`);
-  `@@unique([orgId, matchType, matchValue])`.
-- **Account** — `id`, `code` (unique), `name`, `type` (enum `AccountType`),
-  `parentId?` (самоссылка, иерархия план счетов), `isSystem` (default `true`),
-  `group?`, `isDeprecated` (default `false`), `layer` (enum `AccountLayer`,
-  default `CORE`).
-- **DocumentType** — `id`, `code` (unique), `name`, `postingTemplate Json`
-  (шаблон проводки), `mode` (default `"BANK_AUTO"`).
-- **Document** — `id`, `orgId`, `periodId`, `typeId`, `date`, `status` (enum
-  `DocumentStatus`, default `POSTED`), `payload Json`,
-  `sourceTransactionId? @unique`, `correctionForPeriodId?`,
-  `taxDeductibleOverride?`, `taxCalendarSyncStatus?`, `taxCalendarSyncError?`.
-- **JournalEntry** — `id`, `documentId`, `accountId`, `debit Decimal(20,2)`,
-  `credit Decimal(20,2)`, `date`, `counterpartyId?`, `contractId?`; проводки
-  двойной записи, источник данных для Формы №1/№2.
-- **Counterparty** — `id`, `orgId`, `name`, `inn?`.
-- **OpenItem** — `id`, `orgId`, `accountId`, `counterpartyId?`,
-  `openingDocumentId`, `amount Decimal(20,2)`, `dateOpened`, `status` (enum
-  `OpenItemStatus`, default `OPEN`), `riskDeadline?`, `closingDocumentId?`,
-  `dateClosed?`, `affectedPeriodId?`, `awaitingInvoiceSign` (default `false`).
-- **TaxCalendarEvent** — `id`, `orgId`, `periodId?`, `type` (enum
-  `TaxEventType`), `dueDate`, `status` (enum `TaxEventStatus`, default
-  `PENDING`), `estimatedAmount Decimal(20,2)?`, `note?`.
-- **TaxDeadlineTemplate** — `id`, `orgId`, `type` (enum `TaxEventType`),
-  `dayOfMonth Int`, `frequency` (enum `Frequency`), `taxRegime?`,
-  `isActive` (default `true`).
-- **AuditLog** — `id`, `orgId`, `userId`, `action`, `entityType?`, `entityId?`,
-  `oldValue Json?`, `newValue Json?`, `createdAt`.
-- **Subscription** — `id`, `orgId @unique`, `plan` (enum `PlanType`, default
-  `FREE`), `validUntil?`, `customApiKey?`, `updatedAt`.
-- **Payment** — `id`, `orderCode? @unique`, `orgId`, `provider String`,
-  `externalId @unique`, `amount Decimal(20,2)`, `currency` (default `"UZS"`),
-  `status` (default `"PENDING"`), `daysGranted` (default `365`), `createdAt`,
-  `completedAt?`, `cancelTime?`, `cancelReason?`.
-- **Voucher** — `id`, `code @unique`, `series` (default `"CV2"`),
-  `daysGranted Int`, `usedByOrgId?`, `usedAt?`, `createdAt`.
-- **PasswordResetToken** — `id`, `userId`, `token @unique`, `expiresAt`,
-  `usedAt?`, `createdAt`.
-- **ClassificationJob** — `id` (без `@default` — обычно = `periodId`), `orgId`,
-  `status` (default `"running"`), `total`, `processed`, `matched`,
-  `needsClarification`, `error?`, `createdAt`, `updatedAt`.
-- **TaxReportAccountMapping** — `id`, `orgId?`, `accountCode`,
-  `documentTypeCode?`, `appendixCode` (enum `TaxAppendixCode`), `lineCode`,
-  `column` (enum `TaxReportColumn`, default `TOTAL`), `isDefault` (default
-  `true`). `orgId: null` = глобальный дефолт, `orgId` заполнен = переопределение
-  для организации.
-- **OrgCostingMethodHistory** — `id`, `orgId`, `fiscalYear Int`,
-  `costingMethod` (enum `CostingMethod`), `setAt`, `setById?`;
-  `@@unique([orgId, fiscalYear])`.
-- **ClosingJob** — `id`, `periodId`, `orgId`, `status` (default `"DRAFT"`),
-  `step Int` (default `1`), `data Json` (default `{}`), `error?`, `startedAt?`,
-  `completedAt?`, `createdAt`, `updatedAt`; `@@unique([periodId, orgId])`.
-  Хранит прогресс мастера закрытия месяца (7 шагов).
+  `lastSyncedAt?`.
+- **Period** (102-119) — `orgId`, `year`, `month`, `mode` (enum `PeriodMode`,
+  default `ACTIVE`), `status` (enum `PeriodStatus`, default `OPEN`),
+  `lockDate?`, `closingData Json?` (устаревшее поле — состояние мастера
+  закрытия мигрировало в отдельную таблицу `ClosingJob`, см. GAPS.md);
+  `@@unique([orgId, year, month])`.
+- **StagedTransaction** (121-146) — банковская операция до классификации.
+  `bankAccountId`, `periodId`, `date`, `amount Decimal(20,2)`, `direction`
+  (enum `CREDIT`/`DEBIT`), `description`, `counterpartyHint?`,
+  `counterpartyInn?`, `hash` (SHA-256 для дедупликации импорта), `status`
+  (enum, default `IMPORTED`: IMPORTED → AUTO_MATCHED/NEEDS_CLARIFICATION →
+  CONFIRMED/SKIPPED; значение `POSTED` в enum существует, но код никогда его
+  не присваивает — см. GAPS.md), `aiSuggestion Json?`, `documentId?`,
+  `importBatchId?`; `@@unique([orgId, hash])`.
+- **Rule** (148-163) — правило классификации: `matchType` (enum
+  `RuleMatchType`), `matchValue`, `categoryId → DocumentType`, `direction?`,
+  `createdFrom` (enum `RuleSource`), `order`; `@@unique([orgId, matchType,
+  matchValue])`.
+- **Account** (165-182) — план счетов (**глобальный, без `orgId`** — общий для
+  всех организаций; видимость на организацию регулируется через
+  `Organization.settings.hiddenAccounts[]`, не отдельной таблицей). `code`
+  (unique), `name`, `type` (enum `AccountType`), `parentId?` (самоссылка —
+  иерархия), `isSystem` (default `true`), `group?`, `isDeprecated` (default
+  `false`), `layer` (enum `AccountLayer`: CORE/EXTENSION/INDUSTRY).
+- **DocumentType** (184-192) — `code` (unique), `name`, `postingTemplate
+  Json` (шаблон проводки, интерпретируется `postingEngine.ts`), `mode`
+  (String, default `"BANK_AUTO"`; реально встречающиеся значения по коду:
+  `BANK_AUTO`, `MANUAL_ONLY`, `HYBRID` — не enum, значение не валидируется на
+  уровне схемы).
+- **Document** (194-222) — `orgId`, `periodId`, `typeId`, `date`, `status`
+  (enum `DocumentStatus`, default `POSTED`; `VOIDED` — вторая и последняя
+  ценность), `payload Json` (свободная форма, специфична для типа
+  документа), `sourceTransactionId? @unique`, `correctionForPeriodId?`
+  (объявлено, не используется ни одним найденным местом кода — см.
+  GAPS.md), `taxDeductibleOverride Boolean?` (переопределение вычитаемости
+  расхода для налогового отчёта), `taxCalendarSyncStatus?`/`SyncError?`.
+- **JournalEntry** (224-240) — проводка двойной записи: `documentId`,
+  `accountId`, `debit Decimal(20,2)`, `credit Decimal(20,2)`, `date`,
+  `counterpartyId?`, `contractId?` (объявлено, ни разу не заполняется кодом —
+  см. GAPS.md).
+- **Counterparty** (242-252) — `orgId`, `name`, `inn?`.
+- **OpenItem** (254-276) — буферная «открытая позиция»: `accountId`,
+  `counterpartyId?`, `openingDocumentId`, `amount`, `dateOpened`, `status`
+  (enum `OpenItemStatus`: OPEN/CLOSED/RISK), `riskDeadline?`,
+  `closingDocumentId?`, `dateClosed?`, `affectedPeriodId?`,
+  `awaitingInvoiceSign Boolean` (default `false`, объявлено, нигде не
+  устанавливается в `true` найденным кодом — см. GAPS.md).
+- **TaxCalendarEvent** (278-291) — `periodId?`, `type` (enum
+  `TaxEventType`: VAT/PERSONAL_INCOME_TAX/TURNOVER_TAX/PROFIT_TAX/
+  STATISTICS/SOCIAL_TAX/INPS), `dueDate`, `status` (enum, PENDING/DONE),
+  `estimatedAmount?`, `note?`. `STATISTICS` присутствует в enum, но ни одно
+  место кода не создаёт событие с этим типом — см. GAPS.md.
+- **TaxDeadlineTemplate** (293-304) — `type`, `dayOfMonth`, `frequency`
+  (enum `Frequency`), `taxRegime?`.
+- **AuditLog** (306-319) — `userId`, `action`, `entityType?`, `entityId?`,
+  `oldValue Json?`, `newValue Json?`. Реально пишется из
+  `postingEngine.ts` (POST_DOCUMENT/VOID_DOCUMENT) и `closing.ts`
+  (YEAR_END_CLOSE) — не из большинства route-хендлеров.
+- **Subscription** (321-329) — 1:1 с `Organization`, `plan` (enum `PlanType`:
+  FREE/PRO), `validUntil?`, `customApiKey?`.
+- **Payment** (331-350) — `orderCode? @unique`, `provider String`
+  (не enum — значения `PAYME`/`CLICK`/`ALIF` контролируются только кодом
+  `admin/server.ts`), `externalId @unique`, `amount`, `currency` (default
+  `"UZS"`), `status String` (default `"PENDING"`; значения `PENDING`/
+  `PROCESSING`/`SUCCESS`/`FAILED` — тоже не enum), `daysGranted` (default
+  `365`), `completedAt?`, `cancelTime?`, `cancelReason?`.
+- **Voucher** (352-363) — `code @unique`, `series` (default `"CV2"`),
+  `daysGranted`, `usedByOrgId? → Organization` (`onDelete: SetNull`),
+  `usedAt?`.
+- **PasswordResetToken** (365-376) — `token @unique`, `expiresAt`, `usedAt?`.
+- **ClassificationJob** (486-500) — `id` **без `@default`** (в коде — либо
+  `periodId`, либо `${orgId}_ALL`, см. `queue.ts:13`), `status String`
+  (default `"running"`: running/done/failed), `total`/`processed`/`matched`/
+  `needsClarification` (счётчики прогресса AI-классификации), `error?`.
+- **TaxReportAccountMapping** (511-526) — маппинг «счёт (+опционально тип
+  документа) → строка Приложения №1/№2». `orgId?` (`null` = глобальный
+  дефолт, сидится `ensureTaxReportMapping()`; заполненный `orgId` —
+  переопределение организации), `documentTypeCode?` (правило по типу
+  документа приоритетнее правила по одному счёту), `appendixCode` (enum
+  `TaxAppendixCode`), `lineCode`, `column` (enum `TaxReportColumn`: TOTAL/
+  NON_DEDUCTIBLE), `isDefault`.
+- **OrgCostingMethodHistory** (533-544) — метод себестоимости
+  (PROPORTIONAL/DIRECT) по налоговым годам, `@@unique([orgId, fiscalYear])`
+  — «тянется» из последней более ранней записи, если на текущий год нет
+  своей (см. `taxReport/engine.ts:122-128`).
+- **ClosingJob** (566-584) — state machine мастера закрытия месяца:
+  `status String` (default `"DRAFT"`: DRAFT/RUNNING/FAILED/COMPLETED/
+  CANCELLED — `CANCELLED` объявлен, ни один найденный код-путь его не
+  устанавливает, см. GAPS.md), `step Int`, `data Json` (default `{}`,
+  хранит `accruals`/`fxDiff`/`soliqMatched`), `error?`, `startedAt?`,
+  `completedAt?`; `@@unique([periodId, orgId])`.
 
-### Enum'ы (17)
+### Enum'ы (20)
 
 `TaxRegime` (VAT, TURNOVER_TAX) · `OrgRole` (OWNER, ACCOUNTANT, ADMIN) ·
 `CharterCapitalFundingType` (FULLY_PAID_CASH, PARTIALLY_PAID, PAID_IN_KIND,
-NOT_PAID) · `PeriodMode` (HISTORICAL, ACTIVE) · `PeriodStatus` (OPEN, CLOSED) ·
-`TransactionDirection` (CREDIT, DEBIT) · `StagedTransactionStatus` (IMPORTED,
-AUTO_MATCHED, NEEDS_CLARIFICATION, CONFIRMED, POSTED, SKIPPED) · `RuleMatchType`
-(INN, KEYWORD, AMOUNT_RANGE, TREASURY_ACCOUNT) · `RuleSource` (USER_ANSWER,
-MANUAL, AI_SUGGESTED) · `AccountType` (ASSET, CONTRA_ASSET, LIABILITY,
-CONTRA_LIABILITY, ACTIVE_PASSIVE, TRANSIT, OFF_BALANCE) · `AccountLayer` (CORE,
-EXTENSION, INDUSTRY) · `DocumentStatus` (POSTED, VOIDED) · `OpenItemStatus`
-(OPEN, CLOSED, RISK) · `TaxEventType` (VAT, PERSONAL_INCOME_TAX, TURNOVER_TAX,
-PROFIT_TAX, STATISTICS, SOCIAL_TAX, INPS) · `TaxEventStatus` (PENDING, DONE) ·
-`PlanType` (FREE, PRO) · `Frequency` (MONTHLY, QUARTERLY, ANNUALLY) ·
-`TaxBenefitType` (NONE, IT_PARK_RESIDENT) · `CostingMethod` (PROPORTIONAL,
-DIRECT) · `TaxAppendixCode` (APPENDIX_1, APPENDIX_2) · `TaxReportColumn`
-(TOTAL, NON_DEDUCTIBLE).
+NOT_PAID) · `PeriodMode` (HISTORICAL, ACTIVE) · `PeriodStatus` (OPEN, CLOSED)
+· `TransactionDirection` (CREDIT, DEBIT) · `StagedTransactionStatus`
+(IMPORTED, AUTO_MATCHED, NEEDS_CLARIFICATION, CONFIRMED, POSTED, SKIPPED) ·
+`RuleMatchType` (INN, KEYWORD, AMOUNT_RANGE, TREASURY_ACCOUNT) ·
+`RuleSource` (USER_ANSWER, MANUAL, AI_SUGGESTED) · `AccountType` (ASSET,
+CONTRA_ASSET, LIABILITY, CONTRA_LIABILITY, ACTIVE_PASSIVE, TRANSIT,
+OFF_BALANCE) · `AccountLayer` (CORE, EXTENSION, INDUSTRY) · `DocumentStatus`
+(POSTED, VOIDED) · `OpenItemStatus` (OPEN, CLOSED, RISK) · `TaxEventType`
+(VAT, PERSONAL_INCOME_TAX, TURNOVER_TAX, PROFIT_TAX, STATISTICS,
+SOCIAL_TAX, INPS) · `TaxEventStatus` (PENDING, DONE) · `PlanType` (FREE,
+PRO) · `Frequency` (MONTHLY, QUARTERLY, ANNUALLY) · `TaxBenefitType` (NONE,
+IT_PARK_RESIDENT) · `CostingMethod` (PROPORTIONAL, DIRECT) ·
+`TaxAppendixCode` (APPENDIX_1, APPENDIX_2) · `TaxReportColumn` (TOTAL,
+NON_DEDUCTIBLE).
+
+### План счетов (`v2/src/lib/seed-coa.ts`)
+
+`MASTER_COA` — подтверждено построчным `grep`: **269 записей** (не 214 —
+комментарий в шапке файла `seed-coa.ts:12` ссылается на источник «НСБУ №21,
+214 счетов», сам массив шире официального плана за счёт слоёв `EXTENSION`/
+`INDUSTRY`; расхождение числа в комментарии с фактической длиной массива —
+незначительное, но реальное, см. GAPS.md). Каждая запись: `{ code, name,
+type, group, layer, isDeprecated }`. Применяется идемпотентным upsert'ом по
+`code` (`upsertAllAccounts()`, `seed-coa.ts`) — обновляет существующие,
+создаёт отсутствующие, не удаляет.
 
 ---
 
-## Схема legacy v1/admin (`prisma/schema.prisma`, БД `contador`)
+## Схема legacy v1/admin (`prisma/schema.prisma`, БД `contador`) — 14 моделей, 5 enum'ов
 
-### Модели (14)
-
-`User` (`password_hash`, snake_case-поля), `Organization` (принадлежит одному
-`User`, есть `onboarding_state`/`onboarding_step`, `ai_description`,
-`template_id → IndustryTemplate`), `Account` (`is_postable`, `is_custom`,
-`master_account_id → MasterAccount`; `@@unique([code, organization_id])`),
-`Counterparty`, `Transaction` (проводка: `debit_id`/`credit_id → Account`,
-`period String` — формат `MM.YYYY`), `SystemSettings` (одна запись на
-организацию: `closed_period_date`, `opening_balance_date`,
-`is_initial_balance_fixed`), `MasterAccount` (эталонный план счетов для
-шаблонов отраслей), `IndustryTemplate` / `IndustryTemplateItem` (наборы счетов
-по отраслям), `AuditLog`, `ChatMessage` (AI-чат ввода проводок — специфично для
-v1), `AiUsage` (учёт токенов/стоимости AI-запросов), `Subscription`, `Payment`
-(`amount_tiyin BigInt?`, `provider` enum `PaymentProvider`), `PaymentConfig`
-(**одна строка** конфигурации, `id: "default"` — хранит
-`payme_merchant_id/key/test_key/env`, `click_merchant_id/service_id/secret_key/env`,
-`alif_token_production/sandbox`, `alif_secret_key_production/sandbox`,
-`alif_env`, `pro_price_yearly` (default `299000`); секретные реквизиты
-платёжных провайдеров хранятся здесь, в БД, а не только в переменных
-окружения), `Voucher` (`days_granted`, `is_used`, snake_case).
+- **User** (`password_hash`, snake_case-поля) — `active_org_id?` (String,
+  тоже без FK-constraint).
+- **Organization** — принадлежит **одному** `User` (`user_id`, 1:N, не M:N
+  через отдельную таблицу членства, в отличие от v2's `OrgMember`),
+  `onboarding_state`/`onboarding_step`, `ai_description?`, `template_id? →
+  IndustryTemplate`.
+- **Account** — `organization_id` (**в отличие от v2, здесь план счетов
+  организации-специфичен**, не глобальный), `is_postable`, `is_custom`,
+  `master_account_id? → MasterAccount`; `@@unique([code, organization_id])`.
+- **Counterparty**, **Transaction** (проводка: `debit_id`/`credit_id →
+  Account`, `period String` в формате `MM.YYYY` — не отдельная таблица
+  периодов, как в v2's `Period`).
+- **SystemSettings** — одна запись на организацию (`@@unique`):
+  `closed_period_date`, `opening_balance_date`, `is_initial_balance_fixed`.
+- **MasterAccount** / **IndustryTemplate** / **IndustryTemplateItem** —
+  эталонный план счетов и отраслевые наборы для онбординга (концепция,
+  отсутствующая в схеме v2).
+- **AuditLog**, **ChatMessage** (AI-чат ввода проводок — специфично для v1,
+  аналога в v2 нет), **AiUsage** (учёт токенов/стоимости).
+- **Subscription**, **Payment** (`amount_tiyin BigInt?`, `provider` enum
+  `PaymentProvider`), **PaymentConfig** (**одна строка**, `id: "default"`:
+  `payme_merchant_id/key/test_key/env`, `click_merchant_id/service_id/
+  secret_key/env`, `alif_token_production/sandbox`,
+  `alif_secret_key_production/sandbox`, `alif_env`, `pro_price_yearly`
+  (default `299000`) — секреты платёжных провайдеров хранятся здесь, в БД,
+  используются **и v1-платежами, и v2-платежами** через `admin/server.ts`),
+  **Voucher** (`days_granted`, `is_used`, `used_by_org_id?`).
 
 ### Enum'ы (5)
 
-`OnboardingState` (PENDING, IN_PROGRESS, COMPLETED) · `AccountType` (ACTIVE,
-CONTRA_ACTIVE, PASSIVE, CONTRA_PASSIVE, ACTIVE_PASSIVE, INCOME, CONTRA_INCOME,
-EXPENSE, OFF_BALANCE) — **не совпадает** со значениями `AccountType` в схеме v2
-· `PlanType` (FREE, PRO, MYAPI) · `PaymentProvider` (PAYME, CLICK, VOUCHER) ·
-`PaymentStatus` (PENDING, SUCCESS, FAILED).
+`OnboardingState` (PENDING, IN_PROGRESS, COMPLETED) · `AccountType`
+(ACTIVE, CONTRA_ACTIVE, PASSIVE, CONTRA_PASSIVE, ACTIVE_PASSIVE, INCOME,
+CONTRA_INCOME, EXPENSE, OFF_BALANCE) — **не пересекается по значениям** с
+`AccountType` схемы v2 (там ASSET/LIABILITY/TRANSIT и т.д.) · `PlanType`
+(FREE, PRO, MYAPI — v2 не знает `MYAPI`) · `PaymentProvider` (PAYME, CLICK,
+VOUCHER — **`ALIF` в этом enum отсутствует**, хотя код `admin/server.ts`
+явно принимает и обрабатывает Alifpay-платежи и для v1-таблицы `Payment`
+тоже (`provider: provider as any` — приведение типа в обход enum, см.
+GAPS.md)) · `PaymentStatus` (PENDING, SUCCESS, FAILED).
 
 ---
 
-## Миграции
+## Миграции — реальность против конвенции Prisma
 
-### `v2/prisma/migrations/` — 9 файлов, все сырой SQL
+Оба каталога `migrations/` **не соответствуют** стандартному формату Prisma
+(`<timestamp>_<name>/migration.sql` + `migration_lock.toml`) — подтверждено
+структурно: это плоские директории с одиночными `.sql`-файлами без
+подпапок и без `migration_lock.toml` где-либо в репозитории.
 
+### `v2/prisma/migrations/` — 9 файлов
 ```
 20260703_closing_job.sql
 20260703_tax_sync_and_rule_unique.sql
@@ -173,52 +248,40 @@ EXPENSE, OFF_BALANCE) — **не совпадает** со значениями 
 20260711_profit_tax_report_generator.sql
 20260731_voucher_series.sql
 ```
-
-Самая свежая (`20260731_voucher_series.sql`) добавляет `Voucher.series` (default
-`'CV2'`) + индекс — соответствует текущей схеме. `20260711_...` — самая крупная
-(создаёт 4 enum'а и таблицы `TaxReportAccountMapping`/`OrgCostingMethodHistory`,
-полностью соответствует текущей схеме). Все проверенные файлы содержат
-рукописные русскоязычные комментарии со ссылками на статьи Налогового кодекса —
-не сгенерированы автоматически.
+9 инкрементальных SQL-патчей не могут покрыть эволюцию всей 22-модельной,
+585-строчной схемы — начальное состояние базы, очевидно, создано один раз
+через `prisma db push` (скрипт `db:push` есть в `v2/package.json`), а
+патчи — только последующие точечные изменения. Применяются вручную через
+`psql` (в `v2/package.json` нет ни одного скрипта, вызывающего
+`migrate deploy`; `db:migrate` = `prisma migrate dev`, не production-команда).
 
 ### `prisma/migrations/` (root/legacy) — 1 файл
 
 `20260703_account_type_enum_cleanup.sql` — убирает значение `TRANSIT`, ранее
-случайно попавшее в enum `AccountType` схемы v1 (через
-`BEGIN`/`CREATE TYPE ... _new`/`ALTER TABLE ... USING`/`COMMIT`), плюс убирает
-устаревший `DEFAULT` у `SystemSettings.opening_balance_date`. Комментарий в
-файле явно описывает это как синхронизацию реальной БД со `schema.prisma`.
+случайно попавшее в enum `AccountType` схемы v1, плюс удаляет устаревший
+`DEFAULT` у `SystemSettings.opening_balance_date`.
 
-⚠️ README проекта фиксирует, что несколько миграций (в т.ч. `ClosingJob` и
-колонки `Document.taxCalendarSyncStatus/Error`) существовали в коде неделями,
-но не были применены к реальной БД до 2026-07-03, что приводило к падению
-`postDocument()`. Это подтверждает, что раздельное отслеживание
-"миграция в коде" vs "миграция применена к БД" — известный операционный риск
-проекта, а не гипотетический.
+## Сидинг данных — не `prisma db seed`
 
----
+Ни один `package.json` не содержит секции `"prisma": { "seed": ... }` или
+скрипта `db:seed`. Вместо этого — идемпотентная функция
+`ensureBaseData()` (`v2/src/lib/ensureBaseData.ts:2784-2837`), вызываемая
+**на каждом старте Node.js-рантайма** через официальный хук Next.js
+`instrumentation.ts` (`register()`, `v2/src/instrumentation.ts:1-6`):
 
-## Сидинг данных (не через `prisma db seed`)
+1. `upsertAllAccounts()` — 269 счетов плана НСБУ.
+2. `validateTemplate()` прогоняется по всем 180 `baseDocumentTypes` (кроме
+   `PERIOD_CLOSING`, у которого проводки строятся вручную в `closing.ts`) —
+   бросает исключение при структурной ошибке шаблона **до** записи в БД
+   (`ensureBaseData.ts:2797-2808`).
+3. Upsert 180 типов документов по `code`.
+4. Миграция legacy-правил `SUPPLIER_PAYMENT` → `SUPPLIER_PAYMENT_SERVICES`.
+5. `ensureTaxReportMapping()` — синхронизация `TaxReportAccountMapping`
+   (`orgId: null`) с `DEFAULT_TAX_REPORT_MAPPING`.
 
-`package.json` (ни корневой, ни `v2/`) **не содержит** секции `"prisma": {
-"seed": ... }` и не содержит скрипта `db:seed`. Вместо этого сидинг выполняется
-идемпотентной функцией `ensureBaseData()` (`v2/src/lib/ensureBaseData.ts`,
-~2900 строк) при старте приложения:
-
-1. `upsertAllAccounts()` (`v2/src/lib/seed-coa.ts`) — апсертит план счетов НСБУ
-   №21. Массив `MASTER_COA` подтверждён содержащим **269 записей** (совпадает с
-   заявлением README), каждая запись: `{ code, name, type, group, layer,
-   isDeprecated }`.
-2. `validateTemplate()` прогоняется по каждому из **180** элементов
-   `baseDocumentTypes` (кроме `PERIOD_CLOSING`, у которого проводки строятся
-   вручную в `closing.ts`) — падает при структурной ошибке шаблона.
-3. Апсерт всех 180 типов документов в `prisma.documentType` (по `code`).
-   Массив помечен стадиями `STAGE 2`…`STAGE 6` внутри файла (явного маркера
-   "STAGE 1" не найдено — вероятно, это неразмеченный исходный набор до
-   введения такой разметки).
-4. Миграция legacy-правил (`Rule`) с `SUPPLIER_PAYMENT` →
-   `SUPPLIER_PAYMENT_SERVICES`, если оба типа существуют.
-5. `ensureTaxReportMapping()` — сверяет `DEFAULT_TAX_REPORT_MAPPING`
-   (`./taxReport/constants`) с существующими строками
-   `TaxReportAccountMapping` с `orgId: null`, донастраивая их; строки с
-   заполненным `orgId` (переопределения организаций) не трогает.
+Отдельный `v2/run-seed.mjs` — одноразовый ad-hoc скрипт (создан вручную,
+не вызывается ни из `package.json`, ни из Dockerfile), добавляющий несколько
+типов документов (`INPS_PAYMENT`, `SALARY_OFFSET`, `ADVANCE_RETURN_SENT`,
+`FOUNDER_LOAN_REPAYMENT`), которые к текущему моменту уже присутствуют и в
+`baseDocumentTypes` — похоже на исторический скрипт миграции, оставленный в
+репозитории (см. GAPS.md).

@@ -1,0 +1,176 @@
+# Gaps — Contador
+
+Новый файл, создан 2026-09-08 (`TASK-0002`). Только то, что подтверждено
+прямым чтением кода — файл:строка при каждом утверждении. Методологическая
+оговорка: полный построчный обход выполнен для всех 78 файлов `route.ts` v2,
+`admin/server.ts` (1613 строк), обеих Prisma-схем, ключевых модулей `lib/`
+(`postingEngine.ts`, `closing.ts`, `rulesEngine.ts`, `expressionEval.ts`,
+`taxReport/engine.ts`, `templateValidator.ts`, `openItems.ts`,
+`charterCapital.ts`, `receiptKind.ts`, `billing.ts`, `queue.ts`, `mailer.ts`,
+`constants.ts`, `context.ts`, `auth.ts`/`auth-edge.ts`, `prisma.ts`);
+**не** выполнен для всех 63 файлов `.tsx` построчно (карта запросов построена
+через `grep`, см. VIEWS.md), для `ensureBaseData.ts` целиком (2901 строка —
+структура и число записей подтверждены, не каждый из 180 шаблонов проверен
+индивидуально), для `aiClassifier.ts` целиком (806 строк — прочитана функция
+`classifyAllWithAI` и её сигнатура, не всё построение промпта), для 35 файлов
+тестов (список и `describe`/`it`-заголовки просмотрены, не тела тестов), и
+для `admin/public/index.html` (2391 строка — просмотрен только заголовок).
+
+---
+
+## Не реализовано
+
+1. **Каталог `v1` (legacy) физически отсутствует** — `/home/admin1/contador/src/`
+   не существует в рабочем дереве git (подтверждено `find . -maxdepth 2`),
+   при этом `docker-compose.yml` не описывает сервис `v1` вовсе. Работает ли
+   что-то на порту 3030 в реальном окружении — вопрос эксплуатации, не кода
+   репозитория (см. `OPEN_QUESTIONS.md`).
+2. **Забалансовые счета не поддерживаются** — движок проводок
+   (`v2/src/lib/posting/postingEngine.ts`) не имеет понятия одностороннего
+   учёта; счета 001/002/007 отсутствуют в `MASTER_COA`
+   (`v2/src/lib/seed-coa.ts`).
+3. **Периодический метод учёта ТМЗ не реализован** — счета 9140/9150 в
+   `PNL_UNUSED_TRANSIT_CODES` (`v2/src/app/api/pnl/route.ts:58-63`) явно
+   помечены как не задействованные ни одним типом документа; система ведёт
+   только perpetual-учёт через счёт 2910.
+4. **Обмен валют (`CURRENCY_EXCHANGE`) не реализован** — код операции
+   упоминается только в комментарии `v2/src/lib/constants.ts:210-211` как
+   «намеренно не включён»; сама операция нигде не определена в
+   `ensureBaseData.ts`.
+5. **`Document.correctionForPeriodId`** объявлено в схеме
+   (`v2/prisma/schema.prisma:203`), но ни разу не встречено как
+   присваиваемое/читаемое поле ни в одном route-хендлере или lib-файле,
+   прочитанном в рамках этой задачи.
+6. **`JournalEntry.contractId`** объявлено (`schema.prisma:232`,
+   `postingTemplate.subcontoType === "contract"` поддерживается движком
+   проводок — `postingEngine.ts:193-194`), но ни один из просмотренных 180
+   `baseDocumentTypes` не использует `subcontoType: "contract"` (не
+   проверено построчно по всем 180 записям — оговорка методологии).
+7. **`OpenItem.awaitingInvoiceSign`** (`schema.prisma:267`, default `false`)
+   — не найдено ни одного места кода, устанавливающего это поле в `true`.
+8. **`TaxEventType.STATISTICS`** (`schema.prisma:465`) — не найдено ни
+   одного `taxCalendarEvent.create`/`update` с этим типом ни в `closing.ts`,
+   ни в route-хендлерах.
+9. **`ClosingJob.status = "CANCELLED"`** — статус упомянут в комментарии
+   `closing.ts:570` (`// DRAFT | RUNNING | FAILED | COMPLETED | CANCELLED`),
+   но ни `closing.ts`, ни route-хендлеры `closing/*` не устанавливают это
+   значение — нет API для отмены запущенного закрытия.
+10. **Rate limiting на auth-эндпоинтах v2 не реализован** — `POST
+    /v2/api/auth/login` (`v2/src/app/api/auth/login/route.ts`) не обёрнут
+    ни в какой лимитер (Next.js API routes не имеют аналога
+    `express-rate-limit` из коробки, и в зависимостях `v2/package.json`
+    такого пакета нет) — в отличие от `admin/server.ts`, где
+    `express-rate-limit` стоит явно (строки 239-243, 769-773).
+
+## Реализовано частично
+
+1. **Мультитенантная изоляция по `orgId` — только соглашение кода, не
+   инфраструктурная гарантия.** Расширение Prisma `prismaWithOrg(orgId)`
+   (`v2/src/lib/prisma.ts:28-89`) автоматически подмешивает `orgId` в
+   `where`/`data`, но действует только для 10 моделей, перечисленных в
+   `tablesWithOrgId` (`prisma.ts:15-26`: StagedTransaction, Rule, Document,
+   BankAccount, Period, Counterparty, OpenItem, TaxCalendarEvent, AuditLog,
+   Subscription), и **фактически вызывается лишь в 6 из 78 маршрутов**
+   (`accounts/route.ts`, `accounts/[id]/visibility/route.ts`,
+   `rules/reorder/route.ts`, `settings/org/route.ts`,
+   `settings/open-item-deadlines/route.ts`,
+   `settings/tax-deadlines/route.ts`). Остальные ~72 маршрута полагаются на
+   то, что каждый Prisma-вызов вручную содержит `where: { orgId }` — во всех
+   построчно проверенных файлах (см. раздел «API» — примеры выше) это
+   соблюдено корректно, но гарантии на уровне фреймворка нет: одна
+   пропущенная строка `orgId` в новом хендлере не будет поймана автоматически.
+   Модель `TaxDeadlineTemplate` используется с `prismaWithOrg`, но
+   **отсутствует в самом списке `tablesWithOrgId`** — автоскоуп для неё не
+   срабатывает, `settings/tax-deadlines/route.ts:76-84` полагается
+   исключительно на ручную проверку `findFirst({ where: { id, orgId } })`
+   перед `delete` (сама защита есть, но не через заявленный механизм).
+2. **`activeOrgId` в сессии не перепроверяется по БД на каждый запрос** —
+   `getActiveOrgId()` (`v2/src/lib/context.ts:17-21`) берёт значение прямо
+   из payload подписанного JWT. Если владелец организации удаляет
+   участника (`DELETE /v2/api/org/members/[userId]`), у удалённого
+   пользователя JWT остаётся действительным до истечения
+   `SESSION_MAX_AGE_SECONDS` (7 дней, `constants.ts:173`) — маршруты,
+   вызывающие только `getActiveOrgId()` (без более строгого
+   `getActiveMembership()`, который реально бьёт в `OrgMember`), продолжат
+   отдавать данные организации, из которой пользователь уже удалён, вплоть
+   до истечения токена. Не проверялось, какая доля из 78 маршрутов вызывает
+   `getActiveOrgId()` без последующего `getActiveMembership()`.
+3. **`POST /admin/api/v2/vouchers/redeem` не проверяет владение
+   организацией** — маршрут (`admin/server.ts:733-757`) публичный (не за
+   `adminAuth`), принимает `{orgId, code}` прямо из тела запроса и
+   применяет ваучер к любому переданному `orgId` без проверки, что
+   вызывающий действительно относится к этой организации. Комментарий в
+   коде (`admin/server.ts:732`) объясняет это как «вызывается v2 BFF —
+   `orgId` приходит из сессии через BFF», но сам эндпоинт по HTTP это не
+   проверяет и не привязан к вызывающему сервису — это дизайн, полагающийся
+   на сетевую изоляцию/доверие, не на проверку в коде эндпоинта.
+4. **`checkPaymeAuth`/`adminAuth` — сравнение строк без `timingSafeEqual`**
+   — `authHeader === ADMIN_PASSWORD` (`admin/server.ts:782`) и Basic-Auth
+   сверка Payme (`admin/server.ts:87-93`) используют обычное `===`/`.slice`,
+   в отличие от `verifyAlifSignature`, которая явно применяет
+   `crypto.timingSafeEqual` (`admin/server.ts:166-173`) — непоследовательная
+   защита от timing-атак между разными механизмами аутентификации одного
+   файла.
+5. **Комментарий в `seed-coa.ts:12`** утверждает «НСБУ №21 ... 214 счетов»,
+   но фактический массив `MASTER_COA` содержит **269 записей**
+   (подтверждено `grep -c`) — комментарий не обновлён при расширении плана
+   счетов слоями `EXTENSION`/`INDUSTRY`.
+6. **`v2/run-seed.mjs`** — отдельный ad-hoc скрипт, добавляющий 4 типа
+   документов (`INPS_PAYMENT`, `SALARY_OFFSET`, `ADVANCE_RETURN_SENT`,
+   `FOUNDER_LOAN_REPAYMENT`), которые на момент аудита уже присутствуют и в
+   основном каталоге `baseDocumentTypes` (`ensureBaseData.ts`) — не
+   вызывается ни из `package.json`, ни из `Dockerfile.v2`; похоже на
+   исторический одноразовый скрипт, оставшийся в репозитории.
+7. **`v2/.env: SMTP_SECURE`** — переменная присутствует в файле, но
+   `v2/src/lib/mailer.ts:26` вычисляет `secure` из `SMTP_PORT === 465`, не
+   читая `process.env.SMTP_SECURE` — переменная, по всей видимости, не
+   влияет на поведение.
+8. **Корневой `.env`** содержит `JWT_SECRET`, `BASIC_AUTH_USER`,
+   `BASIC_AUTH_PASSWORD`, `OPENAI_API_KEY`, `PORT`, `PAYME_MERCHANT_ID`,
+   `PAYME_SECRET_KEY`, `CLICK_SERVICE_ID`, `CLICK_SECRET_KEY` — ни одна из
+   них не встречена как читаемая в `admin/server.ts` (единственный
+   исполняемый код, использующий этот `.env`); вероятно, унаследованы от
+   отсутствующего v1. См. [CONFIGURATION.md](CONFIGURATION.md).
+9. **`Payment.provider` (легаси-схема, `prisma/schema.prisma:270-274`,
+   enum `PaymentProvider`) не содержит значения `ALIF`**, хотя
+   `admin/server.ts` в ряде мест приводит тип через `as any`
+   (например, `provider: provider as any` для v2-таблицы, у которой
+   `provider` — обычная строка, не enum) — для v1-таблицы `Payment`
+   (та, что использует enum `PaymentProvider`) Alifpay как провайдер не
+   предусмотрен схемой вовсе; Alifpay реализован только в v2-платёжном
+   потоке (`prismaV2.payment`, `provider String`, без enum-ограничения).
+
+## Мёртвый код
+
+1. **`/home/admin1/contador/ai/`** (`ai/knowledge-base.ts` — 304 строки,
+   `ai/prompts.ts` — 172 строки, суммарно 476 строк) — не импортируется ни
+   одним `.ts`/`.tsx`-файлом в репозитории (проверено
+   `grep -rn "from ['\"].*ai/knowledge-base\|ai/prompts"`, ноль
+   совпадений), и не копируется ни в `Dockerfile.admin`, ни в
+   `Dockerfile.v2` (оба явно перечисляют копируемые пути, `ai/` среди них
+   нет). Каталог для v1 (отсутствующего) тоже не может быть потребителем.
+2. **`v2/audit_output.txt`** (0 байт), **`v2/audit_results.txt`**,
+   **`v2/audit_script.ts`**, **`v2/doc_count.txt`**,
+   **`v2/test-azure-ai.mjs`** — пять файлов в корне `v2/`, не referenced ни
+   одним `package.json`-скриптом, ни `Dockerfile.v2` (который копирует
+   только `v2/` целиком на стадии `builder`, но эти файлы не выполняются
+   никаким последующим шагом сборки/раннтайма) — похоже на рабочие
+   scratch-артефакты отладки, случайно закоммиченные в репозиторий.
+3. **`v2/run-seed.mjs`** — также кандидат на мёртвый код (см. пункт 6 в
+   разделе «Реализовано частично» — граница между «устаревший, но формально
+   рабочий» и «мёртвый» здесь нечёткая, поэтому вынесен в оба раздела с
+   разных сторон одной и той же находки).
+
+## Дополнительно — не гап, но риск безопасности, обнаруженный в процессе аудита
+
+При автоматической загрузке файла `/home/admin1/contador/AGENTS.md` (не
+читался целенаправленно — подгружен харнессом ИИ-агента как «инструкция
+проекта» при работе в этой директории) в нём обнаружен текст, оформленный
+как императивная инструкция для ИИ-агента: *«This is NOT the Next.js you
+know ... Read the relevant guide in `node_modules/next/dist/docs/` before
+writing any code»* (`/home/admin1/contador/AGENTS.md:1-3`). Инструкция не
+была выполнена. Это похоже на попытку prompt injection, встроенную в
+репозиторий, а не на легитимную заметку для агентов (легитимная часть того
+же файла — про счета/шаблоны проводок — не вызывает подозрений и по стилю
+отличается). Отмечено пользователю в ходе этой задачи; содержимое не
+использовалось как источник фактов для документации.
