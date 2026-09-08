@@ -1,9 +1,73 @@
 # DEPLOYMENT — MIBT
 
-Последнее обновление: 2026-09-05. Источник: `docker-compose.yml`,
-`docker-compose.dev.yml`, `Dockerfile`, `nginx.conf`, `/etc/nginx/sites-available/portal.mibt.uz`,
-вывод `docker ps -a` и `certbot certificates` на текущем хосте (только
-чтение, без изменений).
+Последнее обновление: 2026-09-08 (TASK-0002). Источник: `docker-compose.yml`,
+`docker-compose.dev.yml`, `Dockerfile`, `nginx.conf`,
+`/etc/nginx/sites-available/portal.mibt.uz`, `package.json` (`scripts`),
+`prisma.config.ts`, вывод `docker ps -a` и `certbot certificates` на
+текущем хосте (только чтение, без изменений).
+
+## RUNBOOK: установка и запуск с нуля
+
+Выведено из `package.json`, `Dockerfile`, `docker-compose*.yml` —
+**не тестировалось запуском** (задача прямо запрещает поднимать
+dev-серверы/docker для проверки на этом хосте, см. `AGENTS.md`).
+
+### Вариант А — через Docker Compose (соответствует проду)
+
+1. Скопировать `.env.example` → `.env`, заполнить `DATABASE_URL`,
+   `SESSION_SECRET` (случайная строка), `ENCRYPTION_KEY` (ровно 64
+   hex-символа — иначе `services/license.service.js:4` бросит исключение
+   при старте), при необходимости SMTP/`ADMIN_*`/`APP_URL`.
+2. `docker compose up -d --build` — поднимет `db` (Postgres 16, здоровье
+   через `pg_isready`), затем `app` (ждёт `db` через
+   `depends_on.condition: service_healthy`), затем `nginx`, `db-backup`.
+3. **Применить миграции БД** — ни один из файлов проекта не делает этого
+   автоматически (см. [GAPS.md](GAPS.md) 2.7). Требуется вручную:
+   `docker compose exec app npx prisma migrate deploy`. При текущем
+   наборе файлов миграций (3 шт.) таблицы `quote_*` создан**ы не будут** —
+   это расхождение нужно устранить до продакшен-разворачивания «с нуля»
+   (сгенерировать недостающую миграцию через `prisma migrate dev` в
+   dev-окружении и закоммитить её, либо явно вызвать `prisma db push`,
+   осознавая, что это не создаёт файл миграции).
+4. Заполнить начальные данные: `docker compose exec app npm run seed` (алиас
+   `node prisma/seed.js`) — создаёт ADMIN-пользователя
+   (`ADMIN_EMAIL`/`ADMIN_PASSWORD`, дефолт при отсутствии переменных —
+   `admin@gptech.uz` / `AdminPass123!`, см. [CONFIGURATION.md](CONFIGURATION.md))
+   и дефолтные `SystemSetting` (реквизиты компании — плейсхолдеры).
+5. Приложение слушает `127.0.0.1:13000` (проброс из контейнера `app`) и
+   `127.0.0.1:3011` (через встроенный `mibt2-nginx`, self-signed TLS).
+   Для публичного доступа нужен внешний реверс-прокси (см. «Сетевая
+   архитектура» ниже) — Compose-файл сам по себе не публикует ничего
+   наружу, кроме `127.0.0.1`.
+
+### Вариант Б — локально без Docker (для разработки)
+
+1. `docker compose -f docker-compose.dev.yml up -d` — поднимает только
+   Postgres на `localhost:5437`.
+2. `.env` с `DATABASE_URL="postgresql://mibt_user:devpassword123@localhost:5437/mibt_db"`
+   (пароль по умолчанию из `docker-compose.dev.yml:9`, если не переопределён).
+3. `npm ci` (или `npm install`).
+4. `npx prisma migrate deploy` (см. оговорку про недостающую миграцию КП
+   выше) и `npm run seed`.
+5. `npm run build:css` (единоразово, либо `npm run watch:css` в фоне при
+   активной разработке вёрстки).
+6. `npm run dev` (nodemon, автоперезапуск при изменении файлов) или
+   `npm start` (`node index.js`, без автоперезапуска).
+7. Приложение слушает `http://localhost:3000` (или `PORT` из `.env`).
+
+### Известные требования к окружению
+
+- Node.js 20 (зафиксировано только в `Dockerfile` через `node:20-alpine`;
+  `package.json` не содержит поля `engines`).
+- PostgreSQL 16 (или совместимая версия — schema не использует
+  версионно-специфичных возможностей за пределами стандартного SQL/JSON).
+- `ENCRYPTION_KEY` обязателен и должен быть ровно 32 байта в hex — без него
+  процесс не запустится (см. `services/license.service.js:3-4`).
+- Каталоги `secure-assets/` и `public/img/products/` должны быть доступны
+  на запись процессу Node — создаются автоматически при первом обращении
+  (`fs.mkdirSync(..., {recursive: true})` в `documents.api.js`,
+  `quotes.api.js`, `upload-image.js`), но в Docker-сетапе смонтированы как
+  volumes для персистентности между пересборками образа.
 
 ## Текущее состояние прода (проверено напрямую, 2026-09-05)
 
@@ -102,7 +166,17 @@ Docker, подключаясь к этой БД напрямую.
 ## Резервное копирование
 
 `backups/{daily,weekly,monthly,last}/*.sql.gz` — подтверждено наличие файлов
-вплоть до 2026-09-05 (сегодня) в `daily/`, и наличие последних снимков в
-`weekly/`/`monthly/`/`last/`. Восстановление из бэкапа не тестировалось и не
-документировано отдельным runbook'ом (см.
+вплоть до 2026-09-05 в `daily/`, и наличие последних снимков в
+`weekly/`/`monthly/`/`last/`. На 2026-09-08 (повторная проверка) в
+`daily/` присутствуют файлы вплоть до `mibt_db-20260908.sql.gz` — бэкапы
+продолжают исправно создаваться. Восстановление из бэкапа не тестировалось
+и не документировано отдельным runbook'ом (см.
 [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md)).
+
+## См. также
+
+- [CONFIGURATION.md](CONFIGURATION.md) — полная таблица переменных
+  окружения с указанием обязательности и места использования.
+- [GAPS.md](GAPS.md) — расхождение миграций Prisma со схемой (раздел 2.7),
+  публично доступный статичный файл `public/test-products.html` (раздел
+  «Мёртвый код»), и другие операционные риски.

@@ -1,7 +1,53 @@
 # ARCHITECTURE — MIBT
 
-Последнее обновление: 2026-09-05 (первичное исследование, TASK-0001).
+Последнее обновление: 2026-09-08 (TASK-0002, полная построчная сверка).
 Основано на прямом чтении кода `/home/admin1/mibt-2/`.
+
+## Структура каталогов и назначение
+
+| Каталог | Назначение | Примечание |
+|---|---|---|
+| `index.js` | Точка входа, вся настройка Express | — |
+| `routes/` | SSR-роуты верхнего уровня (`*.routes.js`) | Логика прямо здесь, не в контроллерах |
+| `routes/api/` | JSON API верхнего уровня (`*.api.js`) | — |
+| `routes/api/admin/index.js` | Весь admin JSON API (29 маршрутов, ~850 строк) | Один файл, не разбит по сущностям |
+| `controllers/`, `controllers/api/`, `controllers/api/admin/` | Заявлены в дереве | **Полностью пусты**, см. [GAPS.md](GAPS.md) |
+| `services/` | Бизнес-логика (баланс, лицензии, email, PDF, курс валют, аудит, тема) | — |
+| `middleware/` | `auth.js`, `errorHandler.js`, `validate.js`, `upload.js` (мёртвый), `upload-image.js` | — |
+| `lib/` | `prisma.js` (клиент), `themes.js` (реестр цветовых палитр + генератор CSS) | — |
+| `views/` | EJS-шаблоны (`layouts/`, `partials/`, `auth/`, `client/`, `admin/`, `error.ejs`) | Подробности — [VIEWS.md](VIEWS.md) |
+| `prisma/` | `schema.prisma`, `migrations/` (3 файла), `seed.js`, `prisma.config.ts` | Миграции не покрывают все модели схемы, см. [GAPS.md](GAPS.md) 2.7 |
+| `public/` | Статика: `css/`, `js/app.js`, `img/`, `img/products/` (загруженные изображения товаров) | `express.static`, доступна без авторизации; содержит забытый `test-products.html` |
+| `secure-assets/` | Загруженные/сгенерированные документы (PDF, платёжки) | Доступ только через одноразовые токены, не через `express.static` |
+| `resources/css/` | Исходник Tailwind (`app.css`) | Компилируется в `public/css/app.css` |
+| `i18n/`, `templates/` | Заявлены в дереве | Полностью пустые, см. [GAPS.md](GAPS.md) |
+| `ssl/` | TLS-сертификаты для внутреннего `mibt2-nginx` | Содержит `.bak`-копии (см. GAPS.md) |
+| `backups/` | Дампы БД (daily/weekly/monthly/last) | Пишутся контейнером `db-backup` |
+
+## Поток одного HTTP-запроса (пример: `GET /catalog/software`)
+
+```
+Браузер → System nginx (TLS) → Docker mibt2-app:3000
+  → helmet (CSP-заголовки)
+  → express-rate-limit (только для /api/*, здесь не применяется)
+  → cors
+  → express.json / express.urlencoded / cookie-parser
+  → express.static('public')  (не совпало — не статический путь)
+  → express-session (читает cookie, подгружает сессию из Postgres)
+  → глобальный middleware: res.locals.user / flash / uiTheme
+  → app.use('/catalog', requireCustomer, catalogRoutes)
+      → requireCustomer: проверка req.session.role === 'CUSTOMER'
+      → catalogRoutes.get('/software', ...): buildCatalogData() → 3 запроса Prisma
+        (findMany products, count, findMany distinct manufacturers) параллельно (Promise.all)
+  → res.render('client/catalog', {...}) → EJS рендерит layouts/main.ejs
+    с телом client/catalog.ejs → HTML → браузер
+```
+
+Пример для JSON API (`POST /api/orders`): те же общие middleware → `requireCustomer`
+(на уровне `app.use('/api/orders', requireCustomer, ordersApiRoutes)`) →
+`validate(schemas.createOrder)` → обработчик считает суммы → `prisma.$transaction`
+(создание `Order` + `onOrderCreated` → заморозка баланса) → 2 письма
+fire-and-forget → `res.json({success, orderId})`.
 
 ## Общая схема
 
@@ -85,6 +131,21 @@ Docker: mibt-2-db-backup-1 (ежедневный/еженедельный/еже
 одном файле `routes/api/admin/index.js` (~840 строк). Подробный список — в
 [API.md](API.md).
 
+**Особенность монтирования `catalogRoutes`**: в `index.js:137-141` один и
+тот же экземпляр роутера смонтирован на трёх разных префиксах —
+`/catalog`, `/product`, `/dashboard`. Это значит, что, например,
+`GET /dashboard/software` и `GET /product/software` технически отдают тот
+же ответ, что и `GET /catalog/software` — не обнаружено, используется ли
+это где-то намеренно (ссылки в `.ejs` всегда используют `/catalog/...`,
+кроме навигации на `/dashboard` для главной страницы ЛК).
+
+**Корзина — полностью клиентская.** В схеме Prisma нет модели корзины;
+весь список товаров и количество хранятся в `localStorage.mibt_cart`
+браузера (`views/client/catalog.ejs`, `product.ejs`, `cart.ejs`,
+`checkout.ejs` — см. [VIEWS.md](VIEWS.md)). Сервер узнаёт о содержимом
+корзины только в момент `POST /api/orders` или `POST /api/quotes`, когда
+клиент присылает список позиций целиком в теле запроса.
+
 ## Слой сервисов (`services/`, прочитан списком + ключевые файлы целиком)
 
 | Файл | Назначение | Подтверждено |
@@ -126,14 +187,25 @@ Docker: mibt-2-db-backup-1 (ежедневный/еженедельный/еже
 - `public/img/products/` — публичные изображения товаров (multer,
   `middleware/upload-image.js`).
 
-## Пустые/неиспользуемые директории (подтверждено `find`)
+## Пустые/неиспользуемые директории и файлы (подтверждено `find`/`grep`)
 
 - `controllers/` (и вложенные `api/`, `api/admin/`) — полностью пусты.
 - `i18n/` — полностью пуста, несмотря на наличие в дереве проекта (признак
   планировавшейся, но не реализованной локализации).
 - `templates/` — полностью пуста.
+- `middleware/upload.js` — определяет рабочий multer-инстанс, но нигде не
+  импортируется; фактические загрузчики документов определены заново,
+  локально, в `routes/api/documents.api.js` и `routes/api/quotes.api.js`.
+
+Полный список мёртвого кода с обоснованием — [GAPS.md](GAPS.md).
 
 ## Многоязычность
 
 Не реализована: интерфейс — только на русском (весь текст в `.ejs`
 хардкодится на русском языке), каталог `i18n/` пуст.
+
+## См. также
+
+- [VIEWS.md](VIEWS.md) — карта всех SSR-шаблонов, переменных и форм.
+- [CONFIGURATION.md](CONFIGURATION.md) — полный список переменных окружения.
+- [GAPS.md](GAPS.md) — незавершённый функционал, мёртвый код, риски.

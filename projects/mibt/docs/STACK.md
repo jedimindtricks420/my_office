@@ -1,6 +1,7 @@
 # STACK — MIBT
 
-Последнее обновление: 2026-09-05. Источник: `package.json`, `package-lock.json`
+Последнее обновление: 2026-09-08 (TASK-0002, повторная сверка — без
+изменений). Источник: `package.json`, `package-lock.json`
 (`lockfileVersion: 3`, npm), `Dockerfile`, `docker-compose.yml`.
 
 ## Рантайм
