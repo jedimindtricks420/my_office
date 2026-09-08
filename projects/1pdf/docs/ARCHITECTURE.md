@@ -1,124 +1,132 @@
 # Architecture — 1PDF
 
-Снимок на 2026-09-05. Источник — код `/home/admin1/1pdf/`,
-`docker-compose.yml`, `nginx.freepdf.conf`, host-конфигурация
-`/etc/nginx/sites-available/1pdf.uz`, `docker ps -a`.
+Полностью переписано 2026-09-08 (`TASK-0002`, независимый аудит по коду).
 
-## Runtime-топология (полная, включая то, что вне репозитория)
+## Топология контейнеров (`docker-compose.yml`, полностью прочитан)
 
 ```
-Интернет
-  → host nginx (TLS, Certbot, /etc/nginx/sites-available/1pdf.uz)
-      слушает 443, проксирует на 127.0.0.1:8003
-  → контейнер 1pdf-nginx (nginx:alpine, docker-compose.yml этого проекта)
-      порт 8003→80, nginx.freepdf.conf, security-заголовки,
-      auth_request на /editor/*
-  → контейнер 1pdf-admin (Node.js 22 + Express, порт 127.0.0.1:8031)
-      обслуживает портал/админку/API/собранный редактор
-  → контейнер 1pdf-postgres (postgres:16-alpine, 127.0.0.1:5435, БД onepdf)
+Host nginx (Certbot, /etc/nginx/sites-available/1pdf.uz, вне репозитория)
+  TLS-терминация → proxy_pass http://127.0.0.1:8003
+        │
+        ▼
+1pdf-nginx (nginx:alpine, контейнер, слушает 0.0.0.0:8003→80)
+  конфиг: nginx.freepdf.conf (volume-mount, read-only)
+        │
+        ├─ auth_request /api/auth/verify  (гейт для /editor/*)
+        ▼
+1pdf-admin (Express, :8031, только 127.0.0.1)
+        │  один PrismaClient в server.ts + ОТДЕЛЬНЫЙ PrismaClient в paymeController.ts
+        ▼
+1pdf-postgres (postgres:16-alpine, только 127.0.0.1:5435, БД "onepdf")
 ```
 
-Host-уровневый nginx (`/etc/nginx/sites-available/1pdf.uz`) — **вне
-репозитория 1PDF**, управляется Certbot, не отслеживается в git-репозитории
-проекта. Найден и подтверждён напрямую на хосте, а не в коде проекта.
+`onlyoffice-docs` — контейнер существует на хосте (образ
+`onlyoffice/documentserver:latest`), но в статусе `Exited (127)` и не
+описан в `docker-compose.yml` — не часть текущей развёрнутой топологии
+(подтверждено read-only `docker ps -a`, см. [GAPS.md](GAPS.md)).
 
-Все три managed-контейнера (`1pdf-nginx`, `1pdf-admin`, `1pdf-postgres`)
-подтверждены запущенными (`docker ps`, статус `Up`) на 2026-09-05.
+## Поток запроса
 
-## Каталоги (верхний уровень репозитория)
+### Публичная страница / лендинг
+```
+GET /  →  1pdf-nginx (location = /)  →  proxy_pass admin:8031/index.html
+                                          (статика express.static, admin/public/)
+```
 
-- `admin/` — Express-бэкенд: `server.ts` (монолитный, ~1435 строк, все
-  REST-роуты кроме `/api/v1/*`), `routes/editorApi.ts` (текущий
-  document-API), `controllers/paymeController.ts`, `utils/` (платёжные
-  утилиты, коды ошибок Payme), `public/` (статические HTML портала/админки/
-  лендинга — `index.html`, `portal.html`, `admin.html`), `seed.ts`.
-- `editor/` — отдельное React-приложение (Vite), собирается отдельным
-  Docker-стейджем и монтируется под `/editor/` в `1pdf-admin`.
-- `prisma/` — `schema.prisma` + `migrations/` (см. [DATABASE.md](DATABASE.md)).
-- `nginx.freepdf.conf` — конфигурация контейнера `1pdf-nginx`.
-- `scripts/assert-migrations-additive.sh` — CI-подобная проверка, что
-  конкретная миграция (`20260801000000_add_editor_documents_and_language`)
-  аддитивна и не трогает бизнес-поля `Voucher`. Проверяет только эту одну
-  миграцию по имени файла, не универсальный guard для всех будущих миграций.
-- `extraConfigs/backup/` — единичные ручные дампы БД (`db/*.sql`,
-  апрель 2026) и резервные JWT-ключи (`keys/*.key`/`.pub`, апрель 2026);
-  исключены из git (`.gitignore`).
-- `temp_uploads/` — примонтированный volume для файлов: legacy-загрузки
-  (`multer`, корень) и `documents/`/`incoming/` (текущий document-API).
-- `logs/` — `info.log` (нетривиальный), `invalid-auths.log` (пустой на
-  момент снимка).
-- `data_oo/`, `db_oo/`, `lib_oo/`, `logs_oo/`, `postgres_data/` — каталоги с
-  ограниченными правами (не читались, принадлежат другим системным
-  пользователям); по именованию (`_oo`) относятся к прежней интеграции
-  ONLYOFFICE, исключены из git и Docker-контекста (`.gitignore`,
-  `.dockerignore`).
+### Личный кабинет / вход
+```
+GET /portal → admin:8031/portal.html (vanilla JS, без сборки)
+  → fetch('/api/client/...') → admin/server.ts (JWT в cookie 1pdf_token)
+```
 
-## Два поколения document-API (оба присутствуют в коде)
+### Редактор (PRO-only путь)
+```
+GET /editor/... 
+  → nginx: auth_request /api/auth/verify
+       │  проверяет JWT (1pdf_token ИЛИ 1pdf_admin_token), email verified,
+       │  активная PRO-подписка именно для /editor* (admin/server.ts:353-392)
+       ├─ 401 → редирект /portal (не залогинен)
+       ├─ 403 → редирект /portal?msg=pro_required (нет PRO)
+       └─ 200 → proxy_pass admin:8031 → express.static(editor/dist) (собранный Vite-бандл)
+  → React SPA (editor/src/app/App.tsx): status==='ready' ? <Editor/> : <Home/>
+  → useDocumentBootstrap(): ?documentId=... → GET /api/v1/documents/:id/editor-session
+                              ?fileId=...     → GET /uploads/:fileId (legacy-путь)
+  → редактирование полностью в браузере (pdf.js рендер + konva слои + pdf-lib экспорт)
+  → SaveButton: POST /api/v1/documents (новый) или /api/v1/documents/:id/versions (новая версия)
+```
 
-### Текущее — `/api/v1/documents/*` (`admin/routes/editorApi.ts`)
+### Административная панель
+```
+GET /admin → admin:8031/admin.html
+  → fetch('/api/auth/login') → cookie 1pdf_admin_token
+  → fetch('/api/users', '/api/payments', '/api/vouchers', '/api/admin/payment-settings', ...)
+```
 
-Prisma-модели `Document`/`DocumentVersion`, монтируется в `server.ts` как
-`app.use("/api/v1", createEditorApiRouter(prisma, UPLOADS_DIR))`. Активный
-React-редактор (`editor/src/hooks/useDocumentBootstrap.ts`) обращается именно
-сюда при наличии параметра `documentId` в URL.
+## Структура каталогов и назначение
 
-Поток: загрузка/создание → `Document` + `DocumentVersion` (`status:
-READY`) → `current_version_id` указывает на активную версию → редактор
-получает `editor-session` с `downloadUrl` → сохранение создаёт новую версию
-с проверкой `baseVersionId` (оптимистическая блокировка,
-`409 VERSION_CONFLICT` при рассинхронизации).
+```
+/home/admin1/1pdf/
+├── admin/
+│   ├── server.ts               # 1435 строк: auth, платежи (Payme/Click/Alif),
+│   │                            #   пользователи, ваучеры, CMS, legacy ONLYOFFICE-эндпоинты
+│   ├── controllers/paymeController.ts   # JSON-RPC методы Payme (отдельный PrismaClient!)
+│   ├── routes/editorApi.ts     # /api/v1/* — документы, версии, языковые настройки (текущий бэкенд редактора)
+│   ├── utils/paymentUtils.ts   # Click/Payme/Alif подписи и URL-генерация
+│   ├── utils/paymeErrors.ts    # коды ошибок Payme JSON-RPC
+│   ├── seed.ts                 # сидинг SUPERADMIN + лендинг CMS (RU/UZ)
+│   └── public/                 # index.html (лендинг), portal.html (кабинет), admin.html (админка) — vanilla JS, без сборки
+├── editor/                     # независимый Vite/React проект
+│   ├── src/app/                # App.tsx (простой стейт-свитч Home/Editor, без роутера), routes/
+│   ├── src/components/editor/  # Toolbar, PdfViewer, PropertiesPanel, SaveButton, ExportButton, ...
+│   ├── src/lib/pdf/            # loadPdf, renderPdf, exportPdf, pageOperations, textRuns, coordinateTransform
+│   ├── src/store/              # zustand: documentStore, editorStore, cloudStore, fontStore, themeStore, toolStore
+│   ├── src/lib/drafts.ts       # автосохранение правок в IndexedDB (браузер, не сервер)
+│   ├── src/i18n/               # ru/uz/en локали
+│   └── tests/, *.test.ts(x)    # vitest, colocated + tests/fixtures/*.pdf
+├── prisma/
+│   ├── schema.prisma           # 15 моделей, 4 enum'а
+│   └── migrations/             # РЕАЛЬНЫЙ формат Prisma (migration_lock.toml + 5 папок) —
+│                                #   в отличие от других проектов my_office (contador — сырой SQL)
+├── scripts/assert-migrations-additive.sh   # проверяет ОДНУ конкретную (захардкоженную) миграцию на деструктивность
+├── nginx.freepdf.conf           # конфиг контейнера 1pdf-nginx
+├── docker-compose.yml           # 3 сервиса: nginx-proxy, postgres, admin
+├── Dockerfile.admin.v2          # 2-стадийная сборка: editor (Vite build) → admin (tsx runtime)
+├── data_oo/, db_oo/, lib_oo/, logs_oo/   # остатки самостоятельного ONLYOFFICE Document Server —
+│                                #   исключены из Docker-контекста (.dockerignore), не используются рантаймом
+├── test-payments.sh             # ручной shell-скрипт проверки вебхуков (см. GAPS.md — риск секретов)
+└── backups/                     # один дамп БД (pre_freepdf_20260801)
+```
 
-### Legacy — эндпоинты в `admin/server.ts`, завязанные на `JWT_SECRET_OO`
+## Аутентификация — архитектурная точка зрения
 
-`POST /api/documents/upload`, `POST /api/documents/create-new`, `GET
-/api/documents/config`, `POST /api/documents/callback`, `GET
-/uploads/:filename` (с опциональным `?token=`, проверяемым через
-`JWT_SECRET_OO`). `/api/documents/config` формирует конфиг в формате
-ONLYOFFICE Document Server (`documentType: "word"`, `editorConfig.callbackUrl`
-и т.д.), а `/api/documents/callback` при получении статуса "готово к
-сохранению" перезаписывает файл, скачивая его с внутреннего адреса
-`http://onlyoffice-docs` (Docker service name).
+Два независимых JWT-контура на **одном** секрете `JWT_SECRET`
+(`ACTUAL_JWT_SECRET`, `admin/server.ts:40-44`), различаются по полю payload:
+`{ adminId, login, role }` для админов (cookie `1pdf_admin_token`, TTL 7 дней)
+и `{ userId, email }` для пользователей (cookie `1pdf_token`, TTL 30 дней).
+Единый `authMiddleware` (`admin/server.ts:216-263`) декодирует оба вида
+cookie плюс заголовок `Authorization: Bearer` (по наличию `adminId` в
+payload определяет, куда класть токен), кладёт результат в `req.admin`/
+`req.user` и **блокирует запрос (401), если не распознан ни один** — за
+вычетом явного `publicPaths`-списка (14 путей). Отдельный контур
+`JWT_SECRET_OO` подписывает конфиги/токены для ONLYOFFICE (legacy-путь,
+см. OVERVIEW.md).
 
-**Подтверждено**: контейнер `onlyoffice-docs`
-(`onlyoffice/documentserver:latest`) существует на хосте, но его статус —
-`Exited (127) 2 недели назад` (`docker ps -a`), и ни один найденный на хосте
-`docker-compose.yml` (включая файл этого проекта) больше не объявляет сервис
-`onlyoffice-docs`. То есть внутренний адрес `http://onlyoffice-docs`,
-используемый в `/api/documents/callback`, на 2026-09-05 не резолвится ни в
-один работающий контейнер.
+`/api/v1/*` (`editorApi.ts`) — собственный `requireUser`/`requirePro`
+внутри роутера, **дублирующий** (не переиспользующий) одноимённую логику
+`admin/server.ts:277-288` — два места с одинаковым правилом «активная PRO =
+`plan === 'PRO' && (!valid_until || valid_until > now)»`, независимо
+поддерживаемые.
 
-Клиентский редактор всё же содержит путь, читающий файл напрямую через
-`GET /uploads/:legacyFileId` (см. `editor/src/hooks/useDocumentBootstrap.ts`,
-параметр URL `fileId`) — то есть legacy-путь физически достижим со стороны
-браузера независимо от состояния ONLYOFFICE. Не подтверждено, генерирует ли
-что-либо в текущем UI такие ссылки на 2026-09-05. См.
-[OPEN_QUESTIONS.md](OPEN_QUESTIONS.md).
+## Известные архитектурные особенности (заявлены в коде, не результат
+## стороннего анализа)
 
-## Аутентификация и авторизация
-
-- Cookie-based JWT: `1pdf_token` (пользователь, 30 дней), `1pdf_admin_token`
-  (администратор, 7 дней). Поддержан также заголовок `Authorization: Bearer`.
-- `authMiddleware` в `server.ts` пропускает без токена только явный список
-  публичных путей (список путей — см. код); для всех остальных требуется
-  хотя бы один валидный токен (пользователь или админ).
-- `requireAdmin`/`requireSuperAdmin`/`requireUser`/`requirePro` — отдельные
-  guard-функции по ролям и статусу подписки.
-- Nginx (`nginx.freepdf.conf`) дополнительно защищает `/editor/*` через
-  `auth_request /api/auth/verify` — при 401/403 редиректит на `/portal`, но
-  это не единственный слой: `GET /api/auth/verify` в `server.ts` сам
-  проверяет верификацию email и активность PRO-подписки для путей `/editor`.
-- Отдельный секрет `JWT_SECRET_OO` (может быть пустой строкой по умолчанию)
-  используется только legacy ONLYOFFICE-путём — не путать с основным
-  `JWT_SECRET`.
-
-## Персистентность и защита данных
-
-Собственная документация проекта (`docs/ARCHITECTURE.md`,
-`docs/OPERATIONS.md`) явно формулирует "data-safety promise": обновления
-используют только аддитивные Prisma-миграции, не удаляют и не перезаписывают
-существующих пользователей, ваучеры, статусы ваучеров, платежи или
-загруженные документы. Однако подтверждена **фактическая рассинхронизация
-между историей миграций и реальной схемой БД** — см.
-[DATABASE.md](DATABASE.md) и [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md): это не
-противоречит самому "promise" (данные не удалялись), но означает, что
-воссоздание схемы с нуля через одни только файлы миграций не гарантировано.
+- `App.tsx` не использует библиотеку роутинга — переключение Home/Editor
+  через один флаг `documentStore.status` (комментарий:
+  `editor/src/app/App.tsx:9-10`, «Routing stays this simple until the
+  post-launch SEO tool pages land»).
+- Реальные производственные Prisma-миграции (в отличие от других проектов
+  my_office) — `npm run migrate` = `prisma migrate deploy`, вызывается
+  автоматически при каждом старте контейнера (`Dockerfile.admin.v2:22`).
+- Несмотря на «настоящие» миграции, часть текущей схемы БД в них не
+  отражена (см. [DATABASE.md](DATABASE.md) — расхождение подтверждено
+  read-only SQL-инспекцией, не только сравнением файлов).
