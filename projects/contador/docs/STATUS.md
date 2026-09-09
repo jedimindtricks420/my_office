@@ -119,8 +119,9 @@ Azure OpenAI вместо публичного OpenAI, размер AI-батч�
 `main` (`contador_v1`, коммиты по цепочке до `00d199d`) и **выпущена в
 production**: живёт на `https://contador.uz/ru/` и `/uz/` в новом
 контейнере `contador-marketing` (порт 3033), см.
-[ADR-0001](adr/ADR-0001-seo-marketing-app.md) и обновлённый
-[DEPLOYMENT.md](DEPLOYMENT.md).
+[ADR-0001](adr/ADR-0001-seo-marketing-app.md), обновлённый
+[DEPLOYMENT.md](DEPLOYMENT.md) и полный список всех 60 URL —
+[SEO_PAGES.md](SEO_PAGES.md).
 
 Прямой обход всех 60 URL по production-домену подтвердил 200 на каждом,
 корректные hreflang/canonical, реальную живую цену на странице тарифов
