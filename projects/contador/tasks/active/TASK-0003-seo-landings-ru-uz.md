@@ -1,7 +1,7 @@
 ---
 id: TASK-0003
 title: "Contador: SEO-лендинги и полезные страницы на русском и узбекском"
-status: planned
+status: in-progress
 created: 2026-09-09
 owner: azureuser
 priority: high
@@ -797,3 +797,9 @@ Hub 18/26 в P0 заполнять уже готовыми дочерними с
 Следующее действие агента-разработчика: этап A. Первым проверить источник публичной главной и сопоставление `/home/admin1/contador/` с актуальной рабочей копией. Неподтверждённые production-URL и тарифы не подставлять по памяти.
 
 При работе дополнять этот раздел краткими фактическими записями: дата, этап, что сделано, code commit/PR, проверка, блокер/следующий шаг. Не переносить в документацию предположения как реализованные функции.
+
+2026-09-09 (этап A, аудит источника — выполнено): По запросу пользователя начата реализация. Подтверждено прямой проверкой: `/home/admin1/contador` — git remote `jedimindtricks420/contador_v1`, ветка `main`, чистое дерево, HEAD `ec57169e5d1e6d3a3dcbcae2c524cfd1dbf17ea5` (совпадает с SHA, зафиксированным в постановке задачи). Корень `contador.uz/` сейчас обслуживает `nginx` (`/etc/nginx/sites-available/contador.uz`, `location /`) из статического файла `/home/admin1/landing/index.html` — самостоятельный HTML без фреймворка, без git, без `robots.txt`/`sitemap.xml`; это НЕ поддерживаемое приложение → по правилу раздела 4 принято архитектурное решение создавать отдельное `marketing/` внутри `contador_v1`, а не встраивать SEO-страницы в `/home/admin1/landing`. `/v2` (Next.js 16.2.1, `basePath: /v2`, порт 3032) и `/admin` (порт 3031) обслуживаются nginx отдельными `location`-блоками и не менялись. В `v2/next.config.ts` обнаружено `experimental.cpus: 1` с комментарием о падении всей VM от параллельной сборки 2026-08-19 — учтено как обязательное ограничение для новой сборки; на хосте не запускался ни один dev-сервер (соответствует [[feedback_no_dev_server_verification]]).
+
+Собраны и подтверждены реальные данные для пилотных тем (не по памяти): маршруты `/v2/login`, `/v2/register`, `/v2/dashboard`, `/v2/settings/opening-balance`, `/v2/closing`, `/v2/balance`, `/v2/pnl`, `/v2/cashflow`, `/v2/reports`, `/v2/transactions`, `/v2/accounts`, `/v2/open-positions`; реальные 7 шагов мастера закрытия месяца (`v2/src/app/closing/ClosingWizard.tsx:154-164`); реальные тарифы FREE/PRO (`v2/src/lib/constants.ts` — `BILLING.DEFAULT_PRO_PRICE_YEARLY=299000`, `DEFAULT_PRO_DURATION_DAYS=365`), подтверждённые вживую запросом к `http://localhost:3031/admin/api/payment-info` → `{"pro_price_yearly":299000}`, что разблокировало тему 17 (Тарифы) для пилота. Реальные коды счетов НСБУ взяты из `v2/src/lib/constants.ts`.
+
+Этап B (основа) и пилотная волна темы 01, 02, 06, 17, 21, 26, 27 (RU+UZ, 14 URL из 60) отправлены в работу отдельному агенту в изолированном git worktree репозитория `contador_v1`, ветка `feature/seo-landings-ru-uz` — код ещё не смержен, не задеплоен, production не менялся. Следующая запись в этом журнале будет сделана после получения результата и ревью.
