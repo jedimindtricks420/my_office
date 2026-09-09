@@ -79,15 +79,27 @@ Prisma (подробности — [DATABASE.md](DATABASE.md)). Наблюдае
 
 ## Docker Compose — оркестрация продакшна
 
-`docker-compose.yml` (корень) — 3 сервиса, сеть `contador-net` (bridge):
+`docker-compose.yml` (корень) — 4 сервиса, сеть `contador-net` (bridge):
 
 | Сервис | Образ | Порт | depends_on |
 |---|---|---|---|
 | `db` | `postgres:16-alpine` | не публикуется (`expose: 5432`) | — |
 | `admin` | `Dockerfile.admin` | `3031:3031` | `db` (healthy) |
 | `v2` | `Dockerfile.v2` | `3032:3032` | **нет** `depends_on` на `db` |
+| `marketing` | `Dockerfile.marketing` | `3033:3033` | `admin` |
 
 `v1` не описан в compose-файле вовсе.
+
+**`marketing`** добавлен 2026-09-09 (`TASK-0003`) — публичные SEO-лендинги
+RU/UZ, отдельное Next.js-приложение (`marketing/`, без Prisma/сессий/БД).
+Единственная сетевая зависимость — цена тарифа PRO на `/ru/tarify/` и
+`/uz/tariflar/`, читается с `http://admin:3031/admin/api/payment-info` по
+имени сервиса в `contador-net` (`ADMIN_API_URL` — та же переменная и тот же
+паттерн, что и в `v2/.env`; **не** `localhost`, внутри контейнера это сам
+контейнер). Nginx (`/etc/nginx/sites-available/contador.uz`) проксирует
+`/ru/`, `/uz/`, `/_next/`, `/og/`, `= /sitemap.xml`, `= /robots.txt` на
+`localhost:3033`; корневой `location /` (статическая `/home/admin1/landing/`)
+и `/v2`, `/admin` не менялись.
 
 ```bash
 docker compose up -d --build
