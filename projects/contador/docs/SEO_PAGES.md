@@ -1,6 +1,6 @@
-# SEO-страницы — полный список (TASK-0003)
+# SEO-страницы — полный список (TASK-0003 + TASK-0004)
 
-Все 30 тем × 2 языка = 60 URL, выпущены в production 2026-09-09 на `https://contador.uz/`. Источник — единый manifest `marketing/src/content/seo-pages.ts` в `contador_v1`. Статус: `in-progress` (не `completed`) — открытые пункты см. [STATUS.md](STATUS.md#task-0003--публичные-seo-лендинги-ruuz-реализовано-и-выпущено-2026-09-09) и [задачу](../tasks/active/TASK-0003-seo-landings-ru-uz.md).
+Всего 37 тем × 2 языка = 74 URL, выпущены в production на `https://contador.uz/`. Темы 01–30 — TASK-0003 (2026-09-09, продуктовый функционал и общие интенты). Темы 31–37 — TASK-0004 (2026-09-09, налоговый комплаенс РУз: календарь, калькулятор налога с оборота, квартальный налог на прибыль, продавцы маркетплейсов, сверка с Soliq, выбор режима, штрафы за просрочку). Источник — единый manifest `marketing/src/content/seo-pages.ts` в `contador_v1`. Статус: `in-progress` — открытые пункты см. [STATUS.md](STATUS.md) и задачи [TASK-0003](../tasks/active/TASK-0003-seo-landings-ru-uz.md) / [TASK-0004](../tasks/active/TASK-0004-seo-strategy-wave2.md).
 
 | № | Тип | RU | UZ |
 |---|---|---|---|
@@ -34,5 +34,12 @@
 | 28 | Инструмент | [Калькулятор точки безубыточности \| Contador](https://contador.uz/ru/instrumenty/tochka-bezubytochnosti/) | [Zararsizlik nuqtasi kalkulyatori \| Contador](https://contador.uz/uz/vositalar/zararsizlik-nuqtasi/) |
 | 29 | Инструмент | [На сколько хватит денег бизнесу: калькулятор \| Contador](https://contador.uz/ru/instrumenty/zapas-denezhnyh-sredstv/) | [Pul zaxirasi qancha vaqtga yetadi: kalkulyator \| Contador](https://contador.uz/uz/vositalar/pul-zaxirasi-muddati/) |
 | 30 | Инструкция | [Как перейти от Excel к учёту в программе \| Contador](https://contador.uz/ru/rukovodstva/perehod-iz-excel/) | [Excel’dan hisob dasturiga o‘tish \| Contador](https://contador.uz/uz/qollanmalar/exceldan-otish/) |
+| 31 | Функция | [Налоговый календарь Узбекистана 2026 \| Contador](https://contador.uz/ru/vozmozhnosti/nalogovyy-kalendar/) | [O'zbekiston soliq taqvimi 2026 \| Contador](https://contador.uz/uz/imkoniyatlar/soliq-taqvimi/) |
+| 32 | Инструмент | [Калькулятор налога с оборота онлайн \| Contador](https://contador.uz/ru/instrumenty/kalkulyator-naloga-s-oborota/) | [Aylanma solig'i kalkulyatori onlayn \| Contador](https://contador.uz/uz/vositalar/aylanma-soliq-kalkulyatori/) |
+| 33 | Функция | [Расчёт налога на прибыль по кварталам \| Contador](https://contador.uz/ru/vozmozhnosti/raschet-naloga-na-pribyl/) | [Foyda solig'ini choraklab hisoblash \| Contador](https://contador.uz/uz/imkoniyatlar/foyda-solig-hisoboti/) |
+| 34 | Аудитория | [Бухгалтерия для продавцов маркетплейсов \| Contador](https://contador.uz/ru/dlya-prodavcov-marketpleysov/) | [Marketpleys sotuvchilari uchun buxgalteriya \| Contador](https://contador.uz/uz/marketpleys-sotuvchilari-uchun/) |
+| 35 | Функция | [Сверка данных с Soliq и ЭСФ \| Contador](https://contador.uz/ru/vozmozhnosti/sverka-s-soliq/) | [Soliq va EHF ma'lumotlarini solishtirish \| Contador](https://contador.uz/uz/imkoniyatlar/soliq-bilan-solishtirish/) |
+| 36 | Инструкция | [Оборотный налог или НДС: как выбрать режим](https://contador.uz/ru/rukovodstva/oborotnyy-nalog-ili-nds/) | [Aylanma solig'i yoki QQS: qaysi rejimni tanlash](https://contador.uz/uz/qollanmalar/aylanma-soliq-yoki-qqs/) |
+| 37 | Инструкция | [Штрафы за просрочку налоговой отчётности](https://contador.uz/ru/rukovodstva/shtrafy-za-prosrochku-otchetnosti/) | [Hisobot kechikishi uchun jarima va javobgarlik](https://contador.uz/uz/qollanmalar/hisobot-kechikishi-uchun-jarima/) |
 
 Технические конечные точки: [sitemap.xml](https://contador.uz/sitemap.xml), [robots.txt](https://contador.uz/robots.txt).
