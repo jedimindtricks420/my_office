@@ -2,7 +2,7 @@
 
 Полностью переписано 2026-09-08 (`TASK-0002`, независимый аудит по коду).
 
-## Три приложения на одном PostgreSQL-инстансе
+## Три приложения на одном PostgreSQL-инстансе + публичный marketing (без БД)
 
 ```
 PostgreSQL 16 (контейнер contador-db, postgres:16-alpine)
@@ -11,6 +11,11 @@ PostgreSQL 16 (контейнер contador-db, postgres:16-alpine)
 
 contador-v2 (Next.js, :3032, basePath /v2)   ─┐  отдельные PrismaClient,
 contador-admin (Express, :3031, /admin/api)  ─┘  admin генерирует ОБА клиента
+
+contador-marketing (Next.js, :3033, без basePath) — публичные SEO-лендинги
+RU/UZ (TASK-0003, добавлено 2026-09-09). Без Prisma, без сессий, без БД —
+единственный сетевой вызов: GET admin:3031/admin/api/payment-info за ценой
+тарифа PRO (тот же admin, что и v2, по имени сервиса в contador-net).
 ```
 
 `admin/server.ts:1-34` явно создаёт два клиента: `prisma` (корневая схема,
