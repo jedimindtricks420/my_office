@@ -1,6 +1,11 @@
 # Views — Contador
 
-Новый файл, создан 2026-09-08 (`TASK-0002`). В проекте **нет EJS/шаблонов** —
+Основа карты — аудит 2026-09-08 (`TASK-0002`); затронутые TASK-0005 страницы
+уточнены по локальному коду 2026-09-11. Это не новый полный обход UI или
+production; исторические количества файлов/строк ниже не пересчитывались.
+Текущая готовность и проверки: [STATUS](STATUS.md).
+
+В проекте **нет EJS/шаблонов** —
 v2 использует Next.js App Router (React 19, `"use client"`-компоненты,
 Tailwind CSS 4), admin — единственный статический HTML-файл без шаблонизатора.
 Раздел «Views» из типового технического задания адаптирован под этот стек:
@@ -38,7 +43,7 @@ Tailwind CSS 4), admin — единственный статический HTML-
 | `/balance` | `BalanceClient.tsx` | `reports/balance?to=` |
 | `/pnl` | `PnLClient.tsx` | `pnl?from&to` |
 | `/cashflow` | `CashFlowClient.tsx` | `bank-accounts`, `cashflow?...` |
-| `/open-positions` | `OpenPositionsClient.tsx` | `open-items?...`, `open-items/[id]/close`, `/reopen`, `periods` |
+| `/open-positions` | `OpenPositionsClient.tsx` | `open-items?...`, `periods`; ручные close/reopen удалены из UI, общие маршруты не разрешают такое изменение долга |
 | `/tax-dashboard` | `TaxDashboardClient.tsx` | `reports/profit-tax?year&quarter`, `reports/profit-tax/line-details?...` |
 | `/profile` | `ProfileClient.tsx` | `payments/history`, `/initiate`, `/subscription`, `/voucher` |
 | `/reports/balance`, `/journal`, `/osv`, `/account-card`, `/account-analysis`, `/subconto` | `reports/layout.tsx` + `<Раздел>Client.tsx` | по одному `GET /v2/api/reports/<раздел>?...` на страницу; `journal` дополнительно вызывает `posting/void` |
@@ -46,7 +51,7 @@ Tailwind CSS 4), admin — единственный статический HTML-
 | `/settings/accounts` | `settings/accounts/page.tsx` | `accounts?search=`, `accounts/[id]/visibility`, `document-types` |
 | `/settings/members` | `settings/members/page.client.tsx` | `org/members`, `/invite`, `DELETE org/members/[userId]` |
 | `/settings/open-items-deadlines` | `page.tsx` | `settings/open-item-deadlines` |
-| `/settings/opening-balance` | `page.tsx` | `accounts`, `settings/opening-balance` |
+| `/settings/opening-balance` | `page.tsx` | `GET accounts`, `GET/POST settings/opening-balance`; точные строки, первичный ввод, существующий баланс read-only, retry загрузки |
 | `/settings/profit-tax` | `page.tsx` | `settings/costing-method`, `settings/costing-method?year=`, `settings/org` |
 | `/settings/rules` | `page.tsx` | `document-types`, `rules`, `rules/[id]/apply`, `/reorder`, `DELETE rules/[id]`, `PUT rules/[id]` |
 | `/settings/tax-calendar` | `page.tsx` | `settings/tax-deadlines`, `DELETE ...?id=` |
@@ -57,6 +62,22 @@ Tailwind CSS 4), admin — единственный статический HTML-
 `DashboardClient.tsx` напрямую — серверный компонент передаёт данные как
 props; подтверждено отсутствием `fetch("dashboard"` внутри самого
 `DashboardClient.tsx` при наличии вызова из родителя).
+
+### Архивы в мастере закрытия
+
+- Step1 включает `BankImportArchive`: `GET /v2/api/import/bank/batches?bankAccountId=`,
+  пагинация `cursor`, оригинал/протокол через
+  `GET /v2/api/import/bank/batches/[batchId]/export?format=source` или `protocol`.
+  После импорта/отката список обновляется; смена счёта изолирует состояние.
+- Step6 восстанавливает Soliq batch через `GET /v2/api/import/soliq?periodId=`
+  (для выбранного архива также `batchId`), отменяет READY через
+  `POST /v2/api/import/soliq/[batchId]/discard`; скачивает оригинал/протокол
+  через `GET /v2/api/import/soliq/[batchId]/export?format=source` или `protocol`.
+- Права, состояния и ограничения: [API](API.md),
+  [ADR-0014](adr/ADR-0014-bank-import-source-archive.md),
+  [ADR-0005](adr/ADR-0005-soliq-server-batch.md).
+  Нативное сохранение скачанного файла и полный авторизованный Next E2E
+  не подтверждены; DOM/API-проверки не заменяют их.
 
 ## Layout-компоненты
 

@@ -16,4 +16,8 @@ GitHub repository is the source of truth.
 
 Проекты добавляются в `projects/<project-name>/` по структуре, описанной в корневом [AGENTS.md](AGENTS.md).
 
-На текущем этапе проекты в репозитории не определены.
+## Проекты
+
+| Проект | Текущее состояние | Подробности |
+|---|---|---|
+| [Contador](projects/contador/README.md) | 2026-09-11: исправления бухгалтерского контура реализованы частично и проверены локально; приёмка и выпуск не завершены | [Статус](projects/contador/docs/STATUS.md), [проверки и матрица 57 требований](projects/contador/docs/PROGRESS-2026-09-11.md) |

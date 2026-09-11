@@ -6,17 +6,26 @@
 `/v2/api/...` (`next.config.ts: basePath: "/v2"`, реальный HTTP-путь = `/v2`
 + путь файла относительно `app/`).
 
+Поправки 2026-09-11 ниже описывают локальный TASK-0005, не production.
+Числа файлов в заголовках и непересмотренные строки относятся к снимку
+8 сентября. Это не новая полная проверка всех маршрутов.
+Доказательства и незавершённые контракты: [PROGRESS](PROGRESS-2026-09-11.md).
+Добавлены также маршруты архива Soliq `GET /v2/api/import/soliq`,
+`GET /v2/api/import/soliq/[batchId]/export` и
+`POST /v2/api/import/soliq/[batchId]/discard`; контракт и проверки доступа
+описаны в [ADR-0005](adr/ADR-0005-soliq-server-batch.md).
+
 ## Аутентификация — общий механизм v2
 
 Stateless JWT (`jose`, HS256) в httpOnly cookie `v2_session`
 (`SESSION_MAX_AGE_SECONDS` = 7 дней). Каждый обработчик вызывает один из
 хелперов `lib/context.ts`:
 - `getSession()` — только проверка JWT, бросает `"UNAUTHORIZED"`.
-- `getActiveOrgId()` — читает `activeOrgId` **прямо из payload JWT**, не
-  перепроверяя членство в БД на каждый запрос; бросает `"UNAUTHORIZED"` /
-  `"NO_ACTIVE_ORG"`.
-- `getActiveMembership()` — более строгий: реальный `prisma.orgMember.findFirst`;
-  бросает дополнительно `"FORBIDDEN"`.
+- `getActiveOrgId()` — вызывает `getActiveMembership()` и возвращает orgId
+  подтверждённого текущего членства; старого доверия только JWT больше нет.
+- `getActiveMembership()` — реальный `prisma.orgMember.findFirst` по userId
+  и activeOrgId; ошибки `"UNAUTHORIZED"`, `"NO_ACTIVE_ORG"`, `"FORBIDDEN"`.
+  Проверка членства сама по себе не ограничивает бухгалтерскую роль.
 
 В таблицах ниже колонка «Auth» указывает, какой из хелперов вызывается первым
 (это не гарантирует, что каждый последующий Prisma-запрос в обработчике
@@ -58,13 +67,13 @@ Stateless JWT (`jose`, HS256) в httpOnly cookie `v2_session`
 | Метод | Путь | Auth | Параметры | Ответ |
 |---|---|---|---|---|
 | GET/POST | `/v2/api/periods` | getActiveOrgId | POST: `{year,month,mode?}` | список / создание (upsert по факту — при существующем возвращает его) |
-| DELETE | `/v2/api/periods/[id]` | getActiveOrgId | — | 400 если CLOSED; каскадно чистит OpenItem/JournalEntry/Document/StagedTransaction/TaxCalendarEvent |
-| POST | `/v2/api/periods/[id]/close` | getActiveOrgId (+Membership при `force`) | `{force?}` | 400 если есть NEEDS_CLARIFICATION или не было `finalizePeriod`; `force=true` требует OWNER/ADMIN |
-| POST | `/v2/api/periods/[id]/reopen` | getActiveOrgId | — | удаляет системные документы закрытия, PENDING-события; блокирует переоткрытие декабря после года-переноса |
-| GET/POST | `/v2/api/bank-accounts` | getActiveOrgId | POST: `{name,bankName?,accountNumber?,lastBalance?,currency?}` | — |
-| PUT/DELETE | `/v2/api/bank-accounts/[id]` | getActiveOrgId | — | DELETE блокируется при наличии связанных StagedTransaction |
+| DELETE | `/v2/api/periods/[id]` | текущее членство, OWNER/ADMIN | — | только пустой незаблокированный OPEN без истории/зависимостей; транзакция и аудит, без каскадной очистки учёта |
+| POST | `/v2/api/periods/[id]/close` | текущее членство | force-обход удалён | блокировка периода и проверки готовности; наличие параметра force не разрешает обход |
+| POST | `/v2/api/periods/[id]/reopen` | текущее членство | — | атомарная очистка/аудит; последующий CLOSED или зависимое погашение блокирует операцию |
+| GET/POST | `/v2/api/bank-accounts` | текущее членство; POST OWNER/ADMIN | POST: строгая схема, 20-значный номер, денежные строки | нормализация номера/проверка дублей под org-lock; ADR-0011/0012 |
+| PUT/DELETE | `/v2/api/bank-accounts/[id]` | текущее членство, OWNER/ADMIN | PUT: строгая частичная схема | использованные финансовые реквизиты защищены; DELETE только пустого нулевого счёта без истории; транзакция/аудит |
 | GET | `/v2/api/bank-accounts/[id]/stats` | getActiveOrgId | — | `{transactionCount, periodCount}` |
-| GET | `/v2/api/accounts` | getActiveOrgId | `?search=&showHidden=` | глобальный план счетов + иерархия + `isHidden` из `Organization.settings.hiddenAccounts` |
+| GET | `/v2/api/accounts` | getActiveOrgId | `?search=&showHidden=` | глобальный план + иерархия/isHidden; journalEntries/openItems counts и usageCount только своей организации; доступ 401/403 |
 | PATCH | `/v2/api/accounts/[id]/visibility` | getActiveOrgId | `{isHidden}` | пишет в `Organization.settings.hiddenAccounts` (JSON, не отдельная таблица) |
 
 ## v2 — documents/, document-types/, transactions/ (7 файлов)
@@ -72,7 +81,7 @@ Stateless JWT (`jose`, HS256) в httpOnly cookie `v2_session`
 | Метод | Путь | Auth | Параметры | Ответ |
 |---|---|---|---|---|
 | GET | `/v2/api/documents` | getActiveMembership | `?periodId&typeId&status&page&limit(≤100)` | реестр документов, пагинация |
-| POST | `/v2/api/documents` | getActiveMembership | `{typeId,periodId,date,payload}` | создаёт+проводит документ; блокирует `OPENING_CAPITAL_DECLARATION` (только через `/settings/charter-capital`) |
+| POST | `/v2/api/documents` | getActiveMembership + бухгалтерская роль | `{typeId,periodId,date,payload}` | строгий запрос, tenant/дата/период и запрет системных типов, включая YEAR_END_CLOSE; ещё не схема первички для каждого типа |
 | GET | `/v2/api/document-types` | getActiveOrgId | `?bankOnly=true` (фильтр `mode in [BANK_AUTO,HYBRID]`) | справочник 180 типов |
 | GET | `/v2/api/transactions` | getActiveOrgId | `?status&periodId&accountId&direction&categoryId&search&page&limit(≤2000)` | реестр StagedTransaction |
 | PATCH | `/v2/api/transactions/[id]/category` | getActiveMembership | `{documentTypeId,createRule?}` | создаёт/репостит Document; блок закрытого периода, проверка направления, row-lock от гонок |
@@ -83,9 +92,11 @@ Stateless JWT (`jose`, HS256) в httpOnly cookie `v2_session`
 
 | Метод | Путь | Auth | Тело | Ответ |
 |---|---|---|---|---|
-| POST | `/v2/api/import/bank` | getActiveOrgId | `multipart/form-data {file,bankAccountId,parserType?}`, `?preview=true` | автоопределение 1C/Excel по заголовку, SHA-256 дедуп, обновление `lastBalance`, отчёт о расхождении с заявленным закрывающим остатком |
-| DELETE | `/v2/api/import/bank/rollback` | getActiveOrgId | `{batchId}` | блокируется, если хоть одна транзакция батча уже обработана |
-| POST | `/v2/api/import/soliq` | getActiveOrgId | `multipart/form-data {file,periodId}` | 3-проходный матчинг ЭСФ↔OpenItem (точный ИНН → нечёткое имя (Dice-коэффициент биграмм) → исходящие DEBIT-транзакции для расходных ЭСФ) |
+| POST | `/v2/api/import/bank` | getActiveMembership + бухгалтерская роль | `multipart/form-data {file,bankAccountId,parserType?}`, `?preview=true` | только проверенный 1C; Excel/неизвестный 422; тело 6 МиБ/15 с, файл 5 МиБ, 1000 операций; итоги/остаток/архив атомарны, расхождение откатывает запись |
+| DELETE | `/v2/api/import/bank/rollback` | getActiveMembership, OWNER/ADMIN | `{batchId}` | только нетронутые строки и OPEN-периоды, совпадающий snapshot v2, без зависимых изменений; новый архив сохраняется как ROLLED_BACK; неполные/старые snapshots 409 |
+| GET | `/v2/api/import/bank/batches` | getActiveMembership, включая VIEWER | `?bankAccountId&cursor?` | `{batches,nextCursor}`, 20 метаданных IMPORTED/ROLLED_BACK, порядок createdAt/id DESC; чужой банк/cursor 404 |
+| GET | `/v2/api/import/bank/batches/[batchId]/export` | getActiveMembership, включая VIEWER | `?format=source\|protocol` (default protocol) | исходные байты или JSON bank-audit-v1; tenant 404, хеш/размер 409 BANK_SOURCE_INTEGRITY; attachment/no-store/nosniff |
+| POST | `/v2/api/import/soliq` | текущее членство + проверка роли | `multipart/form-data {file,periodId}` | серверный batch с оригиналом/хешем/контролями; разные ИНН не считаются автоматическим совпадением; completion не доверяет суммам клиента |
 
 ## v2 — classification/, clarification/, rules/ (11 файлов)
 
@@ -111,17 +122,17 @@ Stateless JWT (`jose`, HS256) в httpOnly cookie `v2_session`
 | POST | `/v2/api/posting/repost` | getActiveMembership | `{documentId,newDocumentTypeId}` | void + смена типа + повторный posting |
 | POST | `/v2/api/posting/void` | getActiveMembership | `{documentId}` | гасит проводки, возвращает связанную StagedTransaction в NEEDS_CLARIFICATION |
 | GET | `/v2/api/open-items` | getActiveOrgId | `?status&accountCode&periodId&search` | сначала `markRiskyItems()` (пересчёт RISK), затем список + агрегаты по счетам |
-| PATCH | `/v2/api/open-items/[id]/close` | getActiveOrgId | `{closingDocumentId?,dateClosed?}` | ручное закрытие; блок при закрытом периоде |
-| POST | `/v2/api/open-items/[id]/reopen` | getActiveOrgId | — | только для позиций, закрытых вручную (без `closingDocumentId`) |
+| PATCH | `/v2/api/open-items/[id]/close` | текущее членство | — | ручное закрытие отключено; погашение только документом |
+| POST | `/v2/api/open-items/[id]/reopen` | текущее членство | — | ручное открытие отключено; требуется отмена документа расчёта |
 
 ## v2 — closing/ (7 файлов) — мастер закрытия месяца
 
 | Метод | Путь | Auth | Тело/параметры | Ответ |
 |---|---|---|---|---|
-| GET | `/v2/api/closing/[periodId]/state` | getActiveOrgId | — | текущее состояние `ClosingJob` (+ подстановка из прошлого закрытого периода, если суммы нулевые) |
+| GET | `/v2/api/closing/[periodId]/state` | getActiveOrgId | — | текущее состояние ClosingJob; явные нули не заменяются начислениями прошлого периода |
 | GET/DELETE | `/v2/api/closing/[periodId]/accruals` | getActiveOrgId | DELETE сбрасывает accruals-часть состояния | — |
 | GET/POST | `/v2/api/closing/[periodId]/pending-invoices` | getActiveOrgId(+getUser) | POST: `{openItemId,receiptKind?}` | подтверждение постоплатного счёта по открытой позиции (6310/4310) |
-| POST | `/v2/api/closing/[periodId]/step/[stepNumber]/complete` | getActiveOrgId | шаг 4: `{salaryAmount,depreciationAmount,rentAmount,expenseAccountCode}`; шаг 5: `{exchangeRate,difference}`; шаг 6: `{parsedPayload,matched,unmatched}` | шаг 6 — advisory lock + массовое проведение всех ЭСФ из `parsedPayload` внутри одной транзакции (timeout 120с) |
+| POST | `/v2/api/closing/[periodId]/step/[stepNumber]/complete` | текущее членство + проверка роли | шаги 4/5: строгие суммы/курс; шаг 6: `{batchId,decisions}` | данные/прогресс атомарны; шаг 6 загружает серверный источник, сверяет проводки и сохраняет протокол; старый parsedPayload не является источником сумм |
 | POST | `/v2/api/closing/[periodId]/finalize` | getActiveOrgId(+getUser) | `{confirmMissingCogs?}` | вызывает `finalizePeriod()`; `409 MISSING_COGS`, если есть выручка 9020 без списания GOODS_SOLD и не подтверждено явно |
 | POST | `/v2/api/closing/year-end` | getActiveOrgId | `{periodId}` | перенос 9910→8710, только для закрытого декабря, advisory-lock от дублей |
 | GET | `/v2/api/closing/year-end/status` | getActiveOrgId | `?periodId` | `{done: boolean}` |
@@ -141,7 +152,7 @@ Stateless JWT (`jose`, HS256) в httpOnly cookie `v2_session`
 | GET | `/v2/api/reports/subconto` | getActiveMembership | `?from&to&accountId?` | по субконто (контрагент/договор) |
 | GET | `/v2/api/reports/accounts` | getActiveOrgId | — | справочник счетов для селектов отчётов |
 | GET | `/v2/api/reports/counterparties` | getActiveMembership | — | справочник контрагентов организации |
-| GET | `/v2/api/cashflow` | getActiveOrgId | `?from&to&accountId?` | ДДС по категориям, авто-детект смешанных валют |
+| GET | `/v2/api/cashflow` | getActiveOrgId | `?from&to&accountId?` | даты Asia/Tashkent; конкретный банк по источнику в RepeatableRead, чужой 404/неоднозначный 409; полный валютный ДДС ещё не реализован |
 | GET | `/v2/api/cbu-rate` | getActiveOrgId | — | курс USD с `cbu.uz` (внешний вызов, кэш `revalidate: 3600`) |
 | GET | `/v2/api/dashboard` | getActiveOrgId | `?periodId?` | KPI, чек-лист закрытия, риск-позиции, ближайшие налоги |
 
@@ -154,7 +165,8 @@ Stateless JWT (`jose`, HS256) в httpOnly cookie `v2_session`
 | GET/POST | `/v2/api/settings/costing-method` | getActiveOrgId(+Membership) | POST: OWNER/ADMIN | `{fiscalYear,costingMethod}` | фиксация на год, смена — только после полного закрытия предыдущего года |
 | GET/PATCH | `/v2/api/settings/open-item-deadlines` | getActiveOrgId | — | `{код_счёта: дни}` | список счетов выводится динамически из `getOpenItemBufferAccountCodes()` |
 | GET/POST/PUT/DELETE | `/v2/api/settings/tax-deadlines` | getActiveOrgId | — | шаблоны налоговых сроков (`TaxDeadlineTemplate`) | |
-| POST | `/v2/api/settings/opening-balance` | getActiveMembership | — | `{lines[],date}` | начальные остатки; **сумма Дт/Кт обязана сходиться на входе** — не создаётся балансирующая проводка |
+| GET | `/v2/api/settings/opening-balance` | getActiveMembership | любая | — | `{lines:[]}` либо дата/точные строки/итоги/documentId/readOnly; несколько POSTED балансов 409 OPENING_BALANCE_REQUIRES_REVIEW |
+| POST | `/v2/api/settings/opening-balance` | getActiveMembership | OWNER/ADMIN/ACCOUNTANT | строгие `{date,lines:[{accountCode,debit,credit}]}`, 2–500 строк | 201 `{id,totals}` только первично, соответствующий OPEN-месяц; точные равные итоги/допустимые счета, атомарный аудит; нет периода/неверный ввод 400, история/закрытие/конфликт 409; ADR-0015 |
 
 ## v2 — payments/ (4 файла, проксируют admin)
 
