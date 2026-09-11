@@ -14,17 +14,31 @@
 - `BankImportBatch`: оригинал/хеш/версия/строки/контроли/результат,
   IMPORTED/ROLLED_BACK и метаданные отката; составная связь с BankAccount
   по id/orgId, RESTRICT для банка и организации; [ADR-0014](adr/ADR-0014-bank-import-source-archive.md).
+- `PostingRevision`: org/document/period, revision/previousId, POST/VOID,
+  автор/время, JSONB-снимок и SHA-256. SQL-проверки цепочки/tenant и запреты
+  UPDATE/DELETE/TRUNCATE; без FK к живому источнику для сохранения архива
+  после удаления. Это не версия активного журнала или сторно:
+  [ADR-0016](adr/ADR-0016-posting-revision-archive.md).
 - Подготовлены ограничения банковского номера и его нормализованной
   уникальности внутри организации; в Prisma номер оставлен nullable для
   совместимости старой БД; [ADR-0012](adr/ADR-0012-bank-account-database-identity.md).
 
 Raw SQL проверен только на изолированных данных, не применён в production.
 Новый банковский import/rollback требует архивную таблицу до запуска кода.
-UPDATE-защита источника не означает запрет DELETE или неизменяемый AuditLog.
+Для банковского/Soliq источника UPDATE-защита не означает запрет DELETE
+или неизменяемый AuditLog. PostingRevision требует отдельную raw SQL-миграцию
+до нового кода: одна Prisma-схема не устанавливает CHECK/триггеры архива.
 StagedTransaction.importBatchId остаётся мягкой ссылкой. Распределения
 погашений, версии проводок, договоры, персональная зарплата, объекты ОС и
 количественные партии запасов ещё не представлены полноценными регистрами.
 Порядок выпуска: [DEPLOYMENT](DEPLOYMENT.md); требования: [PROGRESS](PROGRESS-2026-09-11.md).
+
+Чтение PostingRevision не добавляет схему: API фильтрует orgId и использует
+существующий индекс orgId/documentId/revision; экспорт получает snapshot::text
+параметризованным SQL и проверяет SHA-256 без преобразования JSON numeric
+через JavaScript Number. Это не RLS. Проверены удалённый Document и отзыв
+членства, в том числе после удаления Organization. Фактический OrgRole:
+OWNER, ADMIN, ACCOUNTANT; требуемая VIEWER ещё отсутствует.
 
 ## Исторический обзор схем
 

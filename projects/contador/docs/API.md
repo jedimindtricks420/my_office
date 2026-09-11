@@ -121,9 +121,23 @@ Stateless JWT (`jose`, HS256) в httpOnly cookie `v2_session`
 | POST | `/v2/api/posting/post` | getActiveMembership | `{documentId}` | ручной вызов `postDocument`, документ должен принадлежать активной организации |
 | POST | `/v2/api/posting/repost` | getActiveMembership | `{documentId,newDocumentTypeId}` | void + смена типа + повторный posting |
 | POST | `/v2/api/posting/void` | getActiveMembership | `{documentId}` | гасит проводки, возвращает связанную StagedTransaction в NEEDS_CLARIFICATION |
+| GET | `/v2/api/posting/revisions` | getActiveMembership | `?documentId&cursor?` | до 20 метаданных, revision DESC, nextCursor; только своя организация, без загрузки снимков |
+| GET | `/v2/api/posting/revisions/[revisionId]/export` | getActiveMembership | — | posting-revision-v1: заголовок, snapshotHash, строка snapshotCanonical; проверка SHA-256, фиксированное имя JSON-файла |
 | GET | `/v2/api/open-items` | getActiveOrgId | `?status&accountCode&periodId&search` | сначала `markRiskyItems()` (пересчёт RISK), затем список + агрегаты по счетам |
 | PATCH | `/v2/api/open-items/[id]/close` | текущее членство | — | ручное закрытие отключено; погашение только документом |
 | POST | `/v2/api/open-items/[id]/reopen` | текущее членство | — | ручное открытие отключено; требуется отмена документа расчёта |
+
+Новые архивные GET доступны всем фактическим ролям OWNER/ADMIN/ACCOUNTANT;
+VIEWER в текущей схеме нет. Живой документ не требуется, но членство проверяется
+заново, включая после удаления организации. Нет истории своей организации:
+200 с пустым списком, одинаково для чужого и отсутствующего documentId.
+Чужой/отсутствующий курсор или revisionId: 404; malformed id: 400;
+нет сессии: 401; нет членства/активной организации: 403; неверный хеш: 409;
+внутренняя ошибка: 500 без деталей. Все ответы private/no-store, nosniff.
+Курсор принадлежит тому же документу и организации, сортировка не по createdAt.
+Хеш экспорта считается по UTF-8 байтам snapshotCanonical, не по JSON-объекту
+после повторной сериализации. Контракт и ограничения:
+[ADR-0016](adr/ADR-0016-posting-revision-archive.md).
 
 ## v2 — closing/ (7 файлов) — мастер закрытия месяца
 
