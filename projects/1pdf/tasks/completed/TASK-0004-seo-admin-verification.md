@@ -1,0 +1,191 @@
+# TASK-0004 — Админка: верификация поисковых систем + управление sitemap/SEO-страницами
+
+Статус: COMPLETED (код изменён, задеплоен в продакшн 2026-09-12)
+Создано: 2026-09-12
+Завершено: 2026-09-12
+Проект: 1PDF
+Область: admin panel / SEO infrastructure
+По прямому запросу пользователя.
+
+## Цель
+
+Пользователь запросил: доработать админку `/home/admin1/1pdf/` так, чтобы
+можно было самостоятельно (без разработчика) вставить коды верификации,
+которые выдают Google Search Console и Yandex.Webmaster при подключении
+сайта, плюс генератор `sitemap.xml` и «прочие SEO-задачи» — прямо из
+интерфейса админки, без правки файлов на сервере.
+
+## Что сделано (код изменён в `/home/admin1/1pdf/`, закоммичено и запушено)
+
+Коммит `283b9bd` в `1pdf_v1@main` (после `654c09c`, TASK-0003).
+
+### Новая таблица `SeoSettings` (Prisma)
+
+`prisma/schema.prisma` + новая миграция
+`prisma/migrations/20260912000000_add_seo_settings/` (additive-only, новая
+таблица, без изменений существующих):
+
+```
+id, google_site_verification, yandex_verification, bing_verification,
+verification_files (JSONB — массив {filename, content}), custom_head_html,
+updated_at
+```
+
+Применена на проде через штатный `prisma migrate deploy` (запускается
+автоматически при старте контейнера `1pdf-admin`, `Dockerfile.admin.v2:22`).
+Перед применением снят ручной бэкап БД
+(`backups/pre_seo_settings_20260912_113852.sql`, вне git — см. `.gitignore`).
+
+### Новые эндпоинты `admin/server.ts`
+
+- `GET/POST /api/admin/seo-settings` (`requireAdmin`) — чтение/сохранение
+  кодов верификации. `POST` принимает как голый код, так и вставленный
+  целиком `<meta ...>` тег — значение `content` извлекается автоматически
+  (`extractVerificationCode`).
+- `GET /api/admin/seo/status` (`requireAdmin`) — количество URL в
+  `sitemap.xml`, дата последней генерации, количество SEO landing pages,
+  содержимое `robots.txt` — для отображения в админке.
+- `POST /api/admin/seo/regenerate-sitemap` (`requireAdmin`) — выполняет
+  `node scripts/generate-sitemap.mjs` как отдельный процесс (source of
+  truth не дублируется).
+- `POST /api/admin/seo/regenerate-pages` (`requireAdmin`) — выполняет
+  `scripts/generate-seo-pages.mjs`, затем `scripts/generate-sitemap.mjs`.
+
+### Раздача кодов верификации на публичном сайте
+
+Два новых маршрута зарегистрированы **до** `express.static`, чтобы
+подмешивать данные из БД без пересборки статики:
+
+- `GET ["/", "/index.html"]` — читает `admin/public/index.html`, вставляет
+  `<meta name="google-site-verification">` / `yandex-verification` /
+  `msvalidate.01` (если заполнены) + `custom_head_html` перед `</head>`,
+  отдаёт результат. Оба пути обрабатываются одним хендлером, так как
+  `nginx.freepdf.conf` (`location = /`) проксирует именно на
+  `admin:8031/index.html`, а не на `/` — без этого маршрут `"/"` никогда бы
+  не сработал для реального трафика через nginx (проверено вручную через
+  curl на проде, найдено и исправлено в этой же задаче).
+- `GET <регекс `/^\/[a-zA-Z0-9_.-]+\.(html|txt|xml)$/`>` — отдаёт файл из
+  `verification_files`, только если имя точно совпадает с одним из
+  настроенных в админке; для любого другого пути (включая уже
+  существующие `admin.html`, `portal.html`, `robots.txt`, `sitemap.xml`)
+  вызывает `next()` и не меняет прежнее поведение.
+
+In-memory кэш `SeoSettings` (`seoSettingsCache`) — избегает похода в БД на
+каждый запрос главной страницы и каждого `*.html/*.txt/*.xml`; сбрасывается
+при сохранении настроек в админке.
+
+### Новая вкладка «SEO» в `admin/public/admin.html`
+
+Доступна любому админу (не только SUPERADMIN, по аналогии с CMS-вкладкой):
+поля для кодов Google/Yandex/Bing, редактор списка verification-файлов
+(добавить/удалить), текстовое поле для произвольного кода в `<head>`
+(аналитика — GA4/Метрика/GTM), статус sitemap/SEO-страниц и кнопки
+«Перегенерировать sitemap.xml» / «Перегенерировать SEO-страницы + sitemap»
+/ открыть `sitemap.xml`/`robots.txt`.
+
+### Инфраструктура: `scripts/` теперь смонтирован в контейнер `1pdf-admin`
+
+До этой задачи `docker-compose.yml` монтировал в `1pdf-admin` только
+`admin/`, `prisma/`, `temp_uploads/` — каталог `scripts/` существовал
+только на хосте и не был доступен внутри контейнера ни при рантайме, ни в
+образе (`Dockerfile.admin.v2` его не копировал). Чтобы новые эндпоинты
+регенерации могли вызывать канонические
+`scripts/generate-sitemap.mjs`/`generate-seo-pages.mjs` (а не дублировать
+их логику), добавлено:
+
+- `docker-compose.yml`: `- /home/admin1/1pdf/scripts:/app/scripts` в
+  `admin.volumes`.
+- `Dockerfile.admin.v2`: `COPY --chown=node:node scripts ./scripts` — чтобы
+  образ был самодостаточным и не зависел только от bind-mount для
+  переносимости.
+
+Применено через полный `docker compose build admin && docker compose up -d
+--no-deps admin` (не просто restart — новый volume mount требует recreate
+контейнера, плюс новая Prisma-модель требует пересборки образа для
+актуального generated client, так как `node_modules/@prisma/client` не
+монтируется с хоста, а печётся в образ на этапе сборки).
+
+## Найденная и исправленная операционная находка (в процессе, не была целью задачи)
+
+**Две реальные production-миграции никогда не попадали в git**:
+`20260730120000_add_voucher_series` и
+`20260801000000_add_editor_documents_and_language` существовали на диске и
+были применены к боевой БД (подтверждено ранее в `TASK-0002`/`DATABASE.md`
+— 5 записей в `_prisma_migrations`, совпадающих с 5 папками на диске), но
+`git ls-files` показывал только 3 из 5 папок миграций как отслеживаемые.
+Причина: `.gitignore` содержал общее правило `*.sql` (задумано для
+исключения дампов БД в `backups/`), которое с коммита `be82ad8` молча
+исключало из `git add` **любые** файлы `.sql`, включая новые файлы
+Prisma-миграций — включая ту, что нужно было добавить в этой задаче.
+Исправлено: `.gitignore` дополнен исключением
+`!prisma/migrations/**/*.sql`; обе пропущенные миграции добавлены в git
+через `git add -f` вместе с новой. Итог: все 6 папок миграций теперь
+отслеживаются в git и совпадают с диском/БД. См. обновлённый
+[GAPS.md](../docs/GAPS.md).
+
+## Проверено на проде (read-write, изменения задеплоены)
+
+- `docker exec 1pdf-postgres pg_dump` — бэкап снят перед миграцией.
+- `docker compose build admin` — успешная сборка, `prisma generate`
+  подхватил новую модель `SeoSettings`.
+- `docker compose up -d --no-deps admin` — контейнер пересоздан,
+  `prisma migrate deploy` применил новую миграцию автоматически при старте
+  (лог: `Applying migration 20260912000000_add_seo_settings` →
+  `All migrations have been successfully applied`).
+- `curl` через прод `1pdf-nginx` (порт 8003) после деплоя: `/`,
+  `/sitemap.xml`, `/robots.txt`, `/ru/pdf-editor/`, `/portal`, `/admin` —
+  все по-прежнему `200`, поведение не изменилось для существующих
+  маршрутов.
+- Функциональный тест новых эндпоинтов с временным тестовым admin JWT
+  (подписан тем же `JWT_SECRET`, что и прод, только для проверки, не
+  сохранён и не оставлен в системе): `GET/POST
+  /api/admin/seo-settings`, `GET /api/admin/seo/status`, `POST
+  /api/admin/seo/regenerate-sitemap` — все отработали корректно.
+- **Найден и исправлен баг в процессе тестирования**: первая версия
+  маршрута для verification-файлов использовала regex без учёта ведущего
+  `/` в пути (`^[a-zA-Z0-9_.-]+\...` вместо `^\/[a-zA-Z0-9_.-]+\...`) —
+  Express никогда не матчил ни один путь, файл верификации не отдавался
+  (`401` вместо содержимого). Исправлено, передеплоено (`docker restart
+  1pdf-admin` — только рестарт процесса, `admin/` смонтирован
+  bind-mount-директорией, пересборка образа не потребовалась), повторно
+  проверено — работает.
+- После тестов все тестовые данные (коды верификации, verification-файл)
+  очищены через тот же API — таблица `SeoSettings` в проде на момент
+  завершения задачи пуста (`google_site_verification`,
+  `yandex_verification`, `bing_verification` = `null`,
+  `verification_files` = `[]`), готова к вводу реальных кодов владельцем.
+
+## Не выполнено (требует владельца продукта — не восстанавливается агентом)
+
+Инфраструктура готова, но **сама верификация в Google Search Console и
+Yandex.Webmaster не выполнена** — для этого нужно:
+
+1. Владельцу создать свойство `1pdf.uz` в
+   [Google Search Console](https://search.google.com/search-console) и в
+   [Yandex.Webmaster](https://webmaster.yandex.ru/), выбрать способ
+   верификации «HTML-тег» (рекомендуется, самый простой при текущей
+   реализации) или «HTML-файл».
+2. Скопировать выданный код/файл в раздел «SEO» новой админки
+   (`https://1pdf.uz/admin` → вкладка SEO) и нажать «Сохранить настройки».
+   Тег появится на `https://1pdf.uz/` немедленно, без деплоя.
+3. Нажать «Подтвердить» в интерфейсе Google/Yandex.
+4. Вручную отправить `https://1pdf.uz/sitemap.xml` в обоих сервисах (кнопка
+   «Отправить sitemap» в Search Console/Webmaster).
+
+Это разрешает пункт 16 из [OPEN_QUESTIONS.md](../docs/OPEN_QUESTIONS.md) в
+части «нет технической возможности» — техническая возможность теперь есть,
+остаётся только действие владельца с реальными аккаунтами. Пункт 17
+(индексация 22 SEO-страниц) по-прежнему не проверяется без доступа к этим
+аккаунтам.
+
+## Не входило в область задачи (осознанно)
+
+- Регенерация контента самих 22 SEO landing pages
+  (`scripts/generate-seo-pages.mjs`) не запускалась — их текст не менялся,
+  кнопка в админке добавлена на будущее для владельца/следующей задачи.
+- Не добавлялись готовые сниппеты конкретных аналитических систем (GA4,
+  Яндекс.Метрика) — только универсальное поле «код в `<head>`», куда
+  владелец может вставить любой сниппет по мере необходимости.
+- Не устранялись прочие находки из `GAPS.md`/`OPEN_QUESTIONS.md`
+  (сломанный `admin.html:1088,1097`, дрейф схемы `PaymentConfig` и т.д.) —
+  вне области этой задачи.

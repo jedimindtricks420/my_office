@@ -2,7 +2,8 @@
 
 Полностью переписано 2026-09-08 (`TASK-0002`, независимый аудит по коду),
 дополнено 2026-09-08 (`TASK-0003` — SEO landing pages, раздел «Поток
-запроса» и структура каталогов ниже).
+запроса» и структура каталогов ниже), дополнено 2026-09-12 (`TASK-0004` —
+админ-верификация поисковых систем, `scripts/` в контейнере `1pdf-admin`).
 
 ## Топология контейнеров (`docker-compose.yml`, полностью прочитан)
 
@@ -82,6 +83,33 @@ GET /ru/<slug>/ или /uz/<slug>/
 паттерн, что и для любого другого отсутствующего статического файла на
 сайте (см. [GAPS.md](GAPS.md)).
 
+### Главная страница и верификация поисковых систем (`TASK-0004`)
+
+```
+GET / (реально nginx проксирует на admin:8031/index.html, см. ниже)
+GET /index.html
+  → admin/server.ts: обработчик ДО express.static, читает
+        admin/public/index.html с диска, подмешивает <meta> теги из
+        SeoSettings (google-site-verification/yandex-verification/
+        msvalidate.01 + произвольный custom_head_html) перед </head>
+  → далее обычная express.static-раздача для всех остальных путей
+```
+Важно: `nginx.freepdf.conf` (`location = /`) делает
+`proxy_pass http://admin:8031/index.html`, то есть Express получает путь
+`/index.html`, а не `/` — обработчик зарегистрирован на оба пути
+одновременно (`app.get(["/", "/index.html"], ...)`), иначе метатеги не
+попадали бы на реальный прод-трафик через nginx (баг найден и исправлен
+в этой же задаче, до первого деплоя в production не дошёл).
+
+```
+GET /<любое-имя>.html|.txt|.xml
+  → admin/server.ts: обработчик ДО express.static проверяет точное
+        совпадение имени файла с SeoSettings.verification_files
+        (verification-файл для Google/Yandex/Bing) → отдаёт content,
+        либо next() без изменений (существующие admin.html/portal.html/
+        robots.txt/sitemap.xml не затронуты)
+```
+
 ## Структура каталогов и назначение
 
 ```
@@ -107,17 +135,22 @@ GET /ru/<slug>/ или /uz/<slug>/
 │   ├── src/i18n/               # ru/uz/en локали
 │   └── tests/, *.test.ts(x)    # vitest, colocated + tests/fixtures/*.pdf
 ├── prisma/
-│   ├── schema.prisma           # 15 моделей, 4 enum'а
-│   └── migrations/             # РЕАЛЬНЫЙ формат Prisma (migration_lock.toml + 5 папок) —
+│   ├── schema.prisma           # 16 моделей (+SeoSettings, TASK-0004), 4 enum'а
+│   └── migrations/             # РЕАЛЬНЫЙ формат Prisma (migration_lock.toml + 6 папок) —
 │                                #   в отличие от других проектов my_office (contador — сырой SQL)
-├── scripts/
+├── scripts/                     # TASK-0004: смонтирован (не только COPY в образ) в контейнер
+│   │                            #   1pdf-admin (docker-compose.yml), чтобы admin/server.ts мог
+│   │                            #   вызывать эти же скрипты через child_process, не дублируя логику
 │   ├── assert-migrations-additive.sh   # проверяет ОДНУ конкретную (захардкоженную) миграцию на деструктивность
 │   ├── generate-seo-pages.mjs   # TASK-0003: source of truth для контента 22 SEO-страниц → admin/public/seo/
+│   │                            #   TASK-0004: запускается также из POST /api/admin/seo/regenerate-pages
 │   └── generate-sitemap.mjs     # TASK-0003: собирает admin/public/sitemap.xml из admin/public/seo/*.html
+│                                #   TASK-0004: запускается также из POST /api/admin/seo/regenerate-sitemap
 ├── nginx.freepdf.conf           # конфиг контейнера 1pdf-nginx; bind-mount ОДНОГО файла (:ro) —
 │                                #   правка на хосте требует docker restart 1pdf-nginx, reload недостаточен
 │                                #   при замене inode редактором (см. GAPS.md, TASK-0003)
-├── docker-compose.yml           # 3 сервиса: nginx-proxy, postgres, admin
+├── docker-compose.yml           # 3 сервиса: nginx-proxy, postgres, admin; admin монтирует
+│                                #   admin/, prisma/, scripts/ (TASK-0004), temp_uploads/
 ├── Dockerfile.admin.v2          # 2-стадийная сборка: editor (Vite build) → admin (tsx runtime)
 ├── data_oo/, db_oo/, lib_oo/, logs_oo/   # остатки самостоятельного ONLYOFFICE Document Server —
 │                                #   исключены из Docker-контекста (.dockerignore), не используются рантаймом

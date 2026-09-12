@@ -10,13 +10,22 @@
   каталог вне `my_office`. Этот репозиторий (`my_office/projects/1pdf/`)
   содержит только документацию и задачи, НЕ код.
 - **Не изменяй `/home/admin1/1pdf/` из задач `my_office`**, если задача явно не
-  требует правок кода и это не согласовано отдельно. Исключение: `TASK-0003`
-  (2026-09-08) по прямому запросу пользователя добавила публичные SEO
-  landing pages в `admin/public/seo/` — код изменён, закоммичен и запушен
+  требует правок кода и это не согласовано отдельно. Исключения:
+  `TASK-0003` (2026-09-08) по прямому запросу пользователя добавила публичные
+  SEO landing pages в `admin/public/seo/` — код изменён, закоммичен и запушен
   в `1pdf_v1@main` (`654c09c`), задеплоен через bind-mount + `docker restart
   1pdf-nginx` (без rebuild). Редактируй эти страницы через
   `scripts/generate-seo-pages.mjs` (source of truth для контента), а не
   правкой сгенерированных `.html` напрямую.
+  `TASK-0004` (2026-09-12) по прямому запросу пользователя добавила вкладку
+  «SEO» в админку (коды верификации Google/Yandex/Bing, управление
+  sitemap.xml/SEO-страницами) — код изменён, закоммичен и запушен в
+  `1pdf_v1@main` (`283b9bd`), задеплоен через `docker compose build admin &&
+  docker compose up -d --no-deps admin` (rebuild обязателен: новая
+  Prisma-модель требует свежего generated client). Новая таблица
+  `SeoSettings`, новый volume-mount `scripts/` в `docker-compose.yml`. При
+  следующей правке `prisma/schema.prisma` проверь, что `.gitignore` не
+  снова проглатывает новую миграцию (см. [GAPS.md](docs/GAPS.md) п.12).
 - Внутри `/home/admin1/1pdf/` есть собственная документация в `docs/`
   (ARCHITECTURE.md, API.md, OPERATIONS.md, PAYMENTS.md, SECURITY.md,
   DEVELOPMENT.md) — она в целом актуальна (в отличие, например, от части
