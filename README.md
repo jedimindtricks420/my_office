@@ -18,6 +18,9 @@ GitHub repository is the source of truth.
 
 ## Проекты
 
+[Git-сверка 2026-09-12](docs/GIT-STATE-2026-09-12.md): опубликованные изменения,
+актуальность origin и явно отмеченные препятствия синхронизации рабочих копий.
+
 | Проект | Текущее состояние | Подробности |
 |---|---|---|
-| [Contador](projects/contador/README.md) | 2026-09-11: исправления бухгалтерского контура реализованы частично и проверены локально; приёмка и выпуск не завершены | [Статус](projects/contador/docs/STATUS.md), [проверки и матрица 57 требований](projects/contador/docs/PROGRESS-2026-09-11.md) |
+| [Contador](projects/contador/README.md) | 2026-09-12: runtime выпуска 11 сентября проверен; исходники 4254a27 опубликованы, но имеют блокеры интеграции архивов/Prisma/начальных остатков и не готовы к новому deployment; 57 требований и G0–G4 не приняты | [Статус](projects/contador/docs/STATUS.md), [проверки и матрица 57 требований](projects/contador/docs/PROGRESS-2026-09-11.md), [production и восстановление](projects/contador/docs/DEPLOYMENT.md) |
