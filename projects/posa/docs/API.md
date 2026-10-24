@@ -98,6 +98,21 @@
 проверки подписи зависят от конкретной записи `Kassa` в БД, а не только от
 глобальных `.env`-переменных (`CLICK_*`, `PAYME_*`).
 
+## Партнёрские сети — UWS (uwsRoutes.js, отдельный процесс)
+
+- `POST /api/payments/uws/:partner` — единая точка входа JSON-RPC 2.0;
+  поддерживается `paynet`. Методы `GetInformation`, `PerformTransaction`,
+  `CheckTransaction`, `CancelTransaction`, `GetStatement`.
+- `GET /healthz` — проверка живости шлюза.
+
+Направление вызовов обратное остальным платёжным интеграциям: партнёр
+обращается к нам, HTTP Basic, логин и пароль выдаём мы и храним хешем в
+`PartnerService`. Обслуживается контейнером `activation-uws`
+(`127.0.0.1:4010`), а не основным приложением. См. [PAYNET.md](PAYNET.md).
+
+Маршруты админки раздела: `/admin/partners`, `/admin/partners/:id/items`,
+`/admin/partner-journal` (роли `admin`, `financial_mgr`, `content_mgr`).
+
 ## QR-платёж (публичный, без авторизации) — qrPaymentRoutes.js
 - `GET /pay/:token`
 - `GET|POST /pay/:token/checkout`

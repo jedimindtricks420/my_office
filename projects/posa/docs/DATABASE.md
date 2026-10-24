@@ -73,6 +73,19 @@
 - `QrPaymentAttempt` (`status`: `PENDING|PROCESSING|PAID|EXPIRED|FAILED`,
   `expiresAt`, `cancelReason`, привязка к `Sale` и `Kassa`)
 
+### Партнёрские сети (добавлено 2026-10-24)
+- `PartnerService` — услуга = бренд в меню терминала партнёра; хранит
+  `serviceId` партнёра, пару логин/`passwordHash` (bcrypt), привязку к
+  `Kassa` и к техническому `Merchant` канала
+- `PartnerServiceItem` — позиция внутри услуги: `code` от терминала,
+  `label` для клиента, необязательная `priceOverride`
+- `PartnerTransaction` — журнал канала и источник `providerTrnId`;
+  уникальный индекс `(partner, externalTxnId)` защищает от повторной выдачи
+
+Там же: `Product.kassaId` (касса на товар, приоритетнее вендорской),
+`Kassa.totalReceivedPaynet`, уникальный индекс на
+`QrPaymentAttempt.externalPaymentId`. Детали — [PAYNET.md](PAYNET.md).
+
 ### Telegram-уведомления
 - `TelegramBot` (хранит `token` как поле таблицы), `StoreTelegramBot`
   (many-to-many со `Store`)
