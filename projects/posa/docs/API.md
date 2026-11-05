@@ -155,8 +155,14 @@
   `/v/brand/:vendorId/:file` (логотип).
 - **`/v/wallet/v1/…`** — Apple PassKit Web Service: регистрация и удаление
   устройства, список обновлённых карт, получение карты, лог.
-- **`/admin/own-cards`**, **`/admin/own-cards/moderation[/:id]`** — сводка по
-  вендорам и модерация рассылок; **`/admin/vendors/:id/own-vouchers/…`** —
+- **`POST /v/google/callback`** — уведомления Google Wallet о сохранении и
+  удалении карты; подпись ECv2SigningOnly, вне общего ограничения частоты;
+  при `GOOGLE_WALLET_MODE` не равном `live` — 404.
+- `/v/:token/apple.pkpass` с Android и `/v/:token/google` с iPhone или Mac
+  перенаправляют на страницу карты.
+- **`/admin/own-cards`**, **`/admin/own-cards/moderation[/:id]`**,
+  **`/admin/own-cards/wallet`** — сводка по вендорам, модерация рассылок,
+  настройка кошельков; **`/admin/vendors/:id/own-vouchers/…`** —
   включение, логотип, сертификат Apple вендора, роли сотрудников. Всё под
   `ensureAdmin`.
 

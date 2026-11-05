@@ -115,6 +115,12 @@ Auth на уровне Nginx. Содержимое `.htpasswd-studio` (спис�
 4. `docker compose up -d --no-deps --force-recreate backend`. Шлюз
    `uws` (Paynet) не перезапускался.
 
+**Обновление 2026-11-05 (вечер), коммит `ac33f8d`:** копия базы
+`db-backups/pre_own_cards_google_20261105.dump`, fast-forward, `prisma migrate
+deploy` (миграция `20261106120000_own_cards_google_saved`), `prisma generate`,
+`docker compose restart backend`. `.env` не менялся. CSR и ключ для продления
+сертификата Namo — `certs/renew-2026/` (вне git).
+
 nginx и поддомены не менялись: `wallet`, `vendor` и `a.namo.uz` уже
 проксировались на `:4000` по HTTPS, пути `/v/…` идут в приложение.
 
@@ -126,6 +132,8 @@ nginx и поддомены не менялись: `wallet`, `vendor` и `a.namo
 
 - Выключить модуль: `OWN_VOUCHERS_ENABLED=false` и пересоздать `backend`.
   Таблицы `Own*` остаются, прежний функционал от них не зависит.
+- Откат последнего обновления: вернуть `main` на `6d6cae5`, перезапустить `backend`.
+  Колонка `googleSavedAt` и новые типы событий старому коду не мешают.
 - Полный откат кода: вернуть `main` на `097152a`, пересоздать `backend`.
   Миграции только добавляли таблицы `Own*` и типы — откатывать их не нужно;
   при необходимости — восстановить базу из `pre_own_cards_20261105.dump`

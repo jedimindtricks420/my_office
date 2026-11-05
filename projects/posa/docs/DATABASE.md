@@ -102,15 +102,16 @@ Migrate (папки с `migration.sql` + `migration_lock.toml`); отдельн�
 
 ## «Мои карты» — таблицы `Own*` (с 2026-11-05)
 
-Миграции `20261030120000_vendor_own_vouchers` и
-`20261105120000_own_cards_moderation_certificates`. Существующие таблицы не
+Миграции `20261030120000_vendor_own_vouchers`,
+`20261105120000_own_cards_moderation_certificates` и
+`20261106120000_own_cards_google_saved`. Существующие таблицы не
 менялись; связи — только к `Vendor` и `User`.
 
 | Таблица | Что хранит |
 |---|---|
 | `VendorOwnVoucherSettings` | включён ли модуль вендору, контакты вендора для карт |
 | `OwnVoucherSeries` | программа: вид карты, оформление, условия, ссылка записи `signupToken`, текст геоподсказки |
-| `OwnVoucher` | выданная карта: код, токен ссылки, состояние, `applePassTypeId` подписанта |
+| `OwnVoucher` | выданная карта: код, токен ссылки, состояние, `applePassTypeId` подписанта, `googleSavedAt` — сохранена в Google Wallet (по уведомлению Google) |
 | `OwnCustomer` | клиент вендора по номеру телефона, согласие на сообщения |
 | `OwnPoint` | точки продаж, координаты |
 | `OwnVoucherEvent` | журнал действий с картами (выдача, штамп, приём, отмена…) |
