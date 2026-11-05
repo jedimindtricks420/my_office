@@ -93,6 +93,44 @@ Auth на уровне Nginx. Содержимое `.htpasswd-studio` (спис�
 Это описание из документации проекта, не проверялось путём фактического
 повторного разворачивания в рамках этой задачи.
 
+## Собственные карты вендора («Мои карты»)
+
+Выведено 2026-11-05, коммит `6d6cae5`. Каталог production —
+`/opt/apps/posa/activation-system` (после переезда на Alibaba). Порядок
+включения целиком — `docs/OWN_VOUCHERS.md` в `POSA-v3`; здесь — что сделано
+и как откатить.
+
+**Как выкладывалось**
+
+1. Резервные копии: база — `db-backups/pre_own_cards_20261105.dump`,
+   окружение — `db-backups/env-before-own-cards-20261105.bak`.
+2. `git merge --ff-only` до `6d6cae5`, `npm install` (из новых пакетов установился только
+   `sharp`, остальные уже стояли), `prisma migrate deploy` (миграции
+   `20261030120000_vendor_own_vouchers` и
+   `20261105120000_own_cards_moderation_certificates`), `prisma generate`.
+3. В `.env` добавлены `OWN_VOUCHERS_ENABLED=true`,
+   `OWN_VOUCHERS_SMS_MODE=live`, `APPLE_PASS_PUSH_MODE=live`,
+   `GOOGLE_WALLET_MODE=off`, `OWN_CERT_SECRET`, `OWN_VOUCHERS_PASS_SECRET`
+   (случайные значения).
+4. `docker compose up -d --no-deps --force-recreate backend`. Шлюз
+   `uws` (Paynet) не перезапускался.
+
+nginx и поддомены не менялись: `wallet`, `vendor` и `a.namo.uz` уже
+проксировались на `:4000` по HTTPS, пути `/v/…` идут в приложение.
+
+**Важно про `OWN_CERT_SECRET`.** Им зашифрованы закрытые ключи сертификатов
+вендоров. Без него или при смене значения ключи не расшифровать — хранить
+вместе с резервными копиями базы.
+
+**Откат**
+
+- Выключить модуль: `OWN_VOUCHERS_ENABLED=false` и пересоздать `backend`.
+  Таблицы `Own*` остаются, прежний функционал от них не зависит.
+- Полный откат кода: вернуть `main` на `097152a`, пересоздать `backend`.
+  Миграции только добавляли таблицы `Own*` и типы — откатывать их не нужно;
+  при необходимости — восстановить базу из `pre_own_cards_20261105.dump`
+  (потеряются данные после выкладки).
+
 ## Приложение my-pwa (Android)
 
 Отдельный процесс сборки, не через Docker/Nginx: Gradle-проект,

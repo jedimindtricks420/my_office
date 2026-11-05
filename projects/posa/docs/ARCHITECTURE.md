@@ -10,6 +10,14 @@
 > магазина и терминалы Paynet. Все они сходятся в одну функцию выдачи
 > `processPaymentInternal`. См. [PAYNET.md](PAYNET.md).
 
+> **Обновление 2026-11-05.** В основное приложение добавлен модуль «Мои
+> карты» — собственные Wallet-карты вендоров: `services/ownVouchers/`,
+> роуты `/vendor/own-vouchers`, `/v/…` (страница карты, запись клиента,
+> PassKit Web Service на `/v/wallet/v1/…`), `/admin/own-cards…`. Отдельного
+> процесса нет; модуль монтируется только при `OWN_VOUCHERS_ENABLED=true`.
+> Решения — [ADR-0002](adr/0002-own-cards-module.md), описание —
+> [SPEC-0001](../specs/active/SPEC-0001-vendor-wallet-cards.md).
+
 ## Общая схема
 
 Один монолитный Node.js/Express-процесс (`activation-system`, порт 4000)

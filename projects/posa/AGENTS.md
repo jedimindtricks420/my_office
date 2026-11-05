@@ -55,9 +55,15 @@
   и т.п.) — он **не подключён** в `index.js` (подключён только
   `apiV1Routes.js`). Похоже на неиспользуемый/устаревший файл. См.
   [OPEN_QUESTIONS.md](docs/OPEN_QUESTIONS.md).
-- Автоматических тестов (jest/mocha/vitest и т.п.) в проекте нет. Есть
-  несколько ручных Node-скриптов в корне `activation-system/` (`test-account-
-  deletion.js` и др.) для ad-hoc проверки конкретных сценариев вручную.
+- Автотесты есть только у модуля «Мои карты»: `tests/own-vouchers.test.js`
+  на встроенном `node:test` (`npm run test:own-vouchers`). Остальной код
+  автотестами не покрыт — есть только ручные Node-скрипты в корне
+  `activation-system/` (`test-account-deletion.js` и др.).
+- Модуль «Мои карты» (собственные Wallet-карты вендоров) — в production с
+  2026-11-05, см. [SPEC-0001](specs/active/SPEC-0001-vendor-wallet-cards.md).
+  Техническое описание — `docs/OWN_VOUCHERS.md` в коде. Разработка идёт в
+  клоне `/root/posa-dev`, выкладка — fast-forward в
+  `/opt/apps/posa/activation-system` (см. [DEPLOYMENT.md](docs/DEPLOYMENT.md)).
 - Известные проблемы безопасности были задокументированы отдельно ранее (см.
   память агента / прошлый аудит от 2026-08-01: секреты в git-истории,
   Postgres на `0.0.0.0:7440`, IDOR на чеках). Эта задача (TASK-0001) их не

@@ -100,6 +100,26 @@ Migrate (папки с `migration.sql` + `migration_lock.toml`); отдельн�
 применялась ли она вручную в обход Prisma Migrate или это черновик/резервная
 копия одной из миграций (см. OPEN_QUESTIONS.md).
 
+## «Мои карты» — таблицы `Own*` (с 2026-11-05)
+
+Миграции `20261030120000_vendor_own_vouchers` и
+`20261105120000_own_cards_moderation_certificates`. Существующие таблицы не
+менялись; связи — только к `Vendor` и `User`.
+
+| Таблица | Что хранит |
+|---|---|
+| `VendorOwnVoucherSettings` | включён ли модуль вендору, контакты вендора для карт |
+| `OwnVoucherSeries` | программа: вид карты, оформление, условия, ссылка записи `signupToken`, текст геоподсказки |
+| `OwnVoucher` | выданная карта: код, токен ссылки, состояние, `applePassTypeId` подписанта |
+| `OwnCustomer` | клиент вендора по номеру телефона, согласие на сообщения |
+| `OwnPoint` | точки продаж, координаты |
+| `OwnVoucherEvent` | журнал действий с картами (выдача, штамп, приём, отмена…) |
+| `OwnPassRegistration` | устройства iPhone, подписанные на обновления карты |
+| `OwnBroadcast`, `OwnBroadcastRecipient`, `OwnBroadcastLog` | рассылки со статусами модерации, получатели, журнал решений |
+| `OwnVendorLogo` | готовые картинки логотипа для Apple и Google |
+| `OwnStaffRole` | роль сотрудника вендора: `OWNER` или `CASHIER` |
+| `OwnAppleCertificate` | сертификаты Pass Type ID вендоров; закрытый ключ зашифрован |
+
 ## Дампы и бэкапы (обнаружены, не проверялось содержимое)
 
 - `/home/admin1/posa/activation-system/posa.sql` — полный дамп схемы/данных

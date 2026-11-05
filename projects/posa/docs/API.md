@@ -139,6 +139,27 @@
 - `GET /activate` (rate-limited `activationLimiter`)
 - `GET /qr/:token`
 
+## «Мои карты» (с 2026-11-05, только при `OWN_VOUCHERS_ENABLED=true`)
+
+Полный список — `routes/vendorOwnVoucherRoutes.js`,
+`routes/ownVoucherPublicRoutes.js`, `routes/ownPassServiceRoutes.js` и блок
+`own-*` в `routes/adminRoutes.js`.
+
+- **`/vendor/own-vouchers/…`** — кабинет вендора, около 60 роутов: программы,
+  выдача, касса, клиенты, сегменты, рассылки, журнал, точки, сотрудники,
+  настройки, сертификат Apple, импорт. Доступ — `ensureVendor`, флаг вендора
+  и роль: кассиру открыты только касса, выдача и действия с картой.
+- **`/v/…`** — публично: `GET /v/:token` (страница карты), `/v/:token/apple.pkpass`,
+  `/v/:token/google`, `POST /v/:token/consent`, `GET|POST /v/join/:token`
+  (самостоятельная запись, 5 попыток за 10 минут с адреса),
+  `/v/brand/:vendorId/:file` (логотип).
+- **`/v/wallet/v1/…`** — Apple PassKit Web Service: регистрация и удаление
+  устройства, список обновлённых карт, получение карты, лог.
+- **`/admin/own-cards`**, **`/admin/own-cards/moderation[/:id]`** — сводка по
+  вендорам и модерация рассылок; **`/admin/vendors/:id/own-vouchers/…`** —
+  включение, логотип, сертификат Apple вендора, роли сотрудников. Всё под
+  `ensureAdmin`.
+
 ## Не проверено в рамках этой задачи
 
 - Точные тела запросов/ответов (схемы полей) для каждого эндпоинта — не
