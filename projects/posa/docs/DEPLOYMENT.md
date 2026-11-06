@@ -110,7 +110,7 @@ Auth на уровне Nginx. Содержимое `.htpasswd-studio` (спис�
    `20261105120000_own_cards_moderation_certificates`), `prisma generate`.
 3. В `.env` добавлены `OWN_VOUCHERS_ENABLED=true`,
    `OWN_VOUCHERS_SMS_MODE=live`, `APPLE_PASS_PUSH_MODE=live`,
-   `GOOGLE_WALLET_MODE=off`, `OWN_CERT_SECRET`, `OWN_VOUCHERS_PASS_SECRET`
+   `GOOGLE_WALLET_MODE=live`, `GOOGLE_WALLET_ISSUER_ID`, `GOOGLE_WALLET_SA_KEY_FILE`, `OWN_CERT_SECRET`, `OWN_VOUCHERS_PASS_SECRET`
    (случайные значения).
 4. `docker compose up -d --no-deps --force-recreate backend`. Шлюз
    `uws` (Paynet) не перезапускался.
