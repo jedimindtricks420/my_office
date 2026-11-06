@@ -15,20 +15,27 @@
 
 Аккаунт Apple Developer Program Namo уже есть (Team ID `5UWY8WBV5Z`).
 
-### 1. Продлить сертификат Namo — до 12 декабря 2026
+### 1. Сертификат Namo
 
-Сертификат `pass.com.gorgeouspartners.namowallet` истекает **2026-12-12**. После этого новые карты без сертификата вендора не выдаются, а выданные перестают обновляться.
+Сертификат `pass.com.gorgeouspartners.namowallet` продлён 2026-11-06 и действует до **2027-12-06**. Продлевать — заранее, за месяц: после истечения новые карты без сертификата вендора не выдаются, а выданные перестают обновляться. Срок видно на «Настройке кошельков».
 
-Запрос на сертификат (CSR) уже создан на сервере, Mac не нужен:
-`/opt/apps/posa/activation-system/certs/renew-2026/namo-pass-2026.csr` (закрытый ключ лежит рядом и сервер не покидает).
+Как продлить, Mac не нужен:
 
-1. developer.apple.com → Account → **Certificates, Identifiers & Profiles** → **Certificates** → «+».
-2. Тип — **Pass Type ID Certificate** → Continue.
-3. Pass Type ID — `pass.com.gorgeouspartners.namowallet` → Continue.
-4. Загрузить файл `namo-pass-2026.csr` → Continue → **Download**: получится `pass.cer`.
-5. Положить `pass.cer` в `/opt/apps/posa/activation-system/certs/renew-2026/` и сообщить агенту.
+1. Агент создаёт на сервере ключ и запрос (CSR) в `certs/renew-<год>/`. Закрытый ключ сервер не покидает.
+2. developer.apple.com → Account → **Certificates, Identifiers & Profiles** → **Certificates** → «+».
+3. Тип — **Pass Type ID Certificate** → Continue.
+4. Pass Type ID — `pass.com.gorgeouspartners.namowallet` → Continue.
+5. Загрузить CSR → Continue → **Download**: получится `pass.cer`. Передать его агенту.
 
-**На сервере (агент):** собрать сертификат с ключом, проверить подпись карты и APNs на «Настройке кошельков», переключить `APPLE_WALLET_SIGNER_CERT_PATH` и `APPLE_WALLET_SIGNER_KEY_PATH`, перезапустить `backend`. Pass Type ID не меняется — выданные карты продолжают обновляться.
+**На сервере (агент):**
+
+1. Проверить, что `pass.cer` сходится с ключом, а Pass Type ID, Team ID и издатель (WWDR) прежние.
+2. Перевести сертификат в PEM. Ключ зашифровать паролем `PASS_KEY_PASSWORD`: `routes/wallet.js` требует ключ с паролем.
+3. До переключения — пробная подпись карты и проверка APNs с новыми путями.
+4. Сохранить копию `.env`, сменить `APPLE_WALLET_SIGNER_CERT_PATH` и `APPLE_WALLET_SIGNER_KEY_PATH`, выполнить `docker compose up -d --no-deps --force-recreate backend`.
+5. Убедиться, что живая карта подписана новым сертификатом. Удалить незашифрованную копию ключа.
+
+Pass Type ID не меняется — выданные карты продолжают обновляться.
 
 ### 2. Официальный значок «Добавить в Apple Wallet»
 

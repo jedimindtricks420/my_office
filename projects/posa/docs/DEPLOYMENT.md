@@ -118,8 +118,14 @@ Auth на уровне Nginx. Содержимое `.htpasswd-studio` (спис�
 **Обновление 2026-11-05 (вечер), коммит `ac33f8d`:** копия базы
 `db-backups/pre_own_cards_google_20261105.dump`, fast-forward, `prisma migrate
 deploy` (миграция `20261106120000_own_cards_google_saved`), `prisma generate`,
-`docker compose restart backend`. `.env` не менялся. CSR и ключ для продления
-сертификата Namo — `certs/renew-2026/` (вне git).
+`docker compose restart backend`. `.env` не менялся.
+
+**Обновление 2026-11-06, сертификат Namo до 2027-12-06:** новые файлы
+`certs/pass_cert_2027.pem` и `certs/pass_key_2027_protected.pem` (вне git), на них
+указывают `APPLE_WALLET_SIGNER_CERT_PATH` и `APPLE_WALLET_SIGNER_KEY_PATH`. Копия
+окружения — `db-backups/env-before-cert-2027-20261106.bak`. Старые файлы оставлены:
+откат — вернуть копию `.env` и пересоздать `backend`, но старый сертификат действует
+только до 2026-12-12.
 
 nginx и поддомены не менялись: `wallet`, `vendor` и `a.namo.uz` уже
 проксировались на `:4000` по HTTPS, пути `/v/…` идут в приложение.
